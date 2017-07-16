@@ -1,0 +1,22 @@
+[MYSQL]
+
+user = test
+password = simpleprocessing
+host = localhost
+port = 3306
+database = test_btc_core_connector
+
+# mysql_pool_threads default 10
+mysql_pool_threads = 100
+
+[BITCOIND]
+
+zeromq = tcp://159.8.41.195:8900
+rpc = http://bitaps:processing@159.8.41.195:8332
+
+[LOG]
+
+log_level = debugI
+
+
+
