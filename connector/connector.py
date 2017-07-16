@@ -133,15 +133,13 @@ class Connector:
                   msgSequence = struct.unpack('<I', msg[-1])[-1]
                   sequence = str(msgSequence)
                 if topic == b"hashblock":
+                    self.log.warning("New block %s" % body)
                     self.loop.create_task(self._get_block_by_hash(hexlify(body).decode()))
                 elif topic == b"rawtx":
                     try:
                         tx = bitcoinlib.Transaction.deserialize(io.BytesIO(body))
-                        self.log.warning("new %s" % bitcoinlib.rh2s(tx.hash))
                     except:
                         self.log.error("Transaction decode failed: %s" % hexlify(body).decode())
-                    self.log.debug(str(tx))
-
                     self.loop.create_task(self._new_transaction(tx))
             except Exception as err:
                 pass

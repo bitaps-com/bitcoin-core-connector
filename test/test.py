@@ -61,7 +61,7 @@ class App:
                 tx_handler=self.new_transaction_handler,
                 orphan_handler=None, debug=connector_debug,
                 debug_full = connector_debug_full,
-                start_block=None)
+                start_block=476100)
             # await self.connector.connected
             # self.connector.subscribe_blocks()
             # self.connector.subscribe_transactions()
