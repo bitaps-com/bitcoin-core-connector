@@ -133,7 +133,7 @@ class Connector:
                   msgSequence = struct.unpack('<I', msg[-1])[-1]
                   sequence = str(msgSequence)
                 if topic == b"hashblock":
-                    self.log.warning("New block %s" % body)
+                    self.log.warning("New block %s" % hexlify(body))
                     self.loop.create_task(self._get_block_by_hash(hexlify(body).decode()))
                 elif topic == b"rawtx":
                     try:
@@ -381,10 +381,19 @@ class Connector:
             self.log.debug("block %s not yet exist" % height)
 
     async def get_last_block(self):
-        self.log.debug("get last block ")
-        d = await self.rpc.getbestblockhash()
-        await self._get_block_by_hash(d)
-
+        self.log.debug("check blockchain status")
+        try:
+            d = await self.rpc.getblockcount()
+            conn = await self._mysql_pool_conn.acquire()
+            cur = await conn.cursor()
+            ld = await get_last_block_height(cur)
+            if ld >= d:
+                self.log.debug("blockchain is synchronized")
+            else:
+                d = await self.rpc.getbestblockhash()
+                await self._get_block_by_hash(d)
+        finally:
+            self._mysql_pool_conn.release(conn)
 
 
 
