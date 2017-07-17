@@ -61,7 +61,7 @@ class Connector:
         self.connected = asyncio.Future()
         self.mysql_pool_size = mysql_pool_size
         self.MYSQL_CONFIG = config["MYSQL"]
-        self.log.info("Bitcoind node connector started")
+        self.log.info("Bitcoind node bitcoindconnector started")
         self.await_tx_list = list()
         self.missed_tx_list = list()
         self.await_tx_id_list = list()
@@ -451,7 +451,7 @@ class Connector:
         # wait until recent block completed
         # close session for rpc
         # close mysql connection pool
-        self.log.warning("Stopping bitcoind connector")
+        self.log.warning("Stopping bitcoind bitcoindconnector")
         self.log.warning("Kill watchdog")
         if self._watchdog:
             self._watchdog.cancel()

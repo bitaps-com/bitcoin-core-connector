@@ -3,7 +3,7 @@ currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentfram
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir)
 import configparser
-import connector
+import bitcoindconnector
 import argparse
 import daemon
 import asyncio
@@ -56,26 +56,26 @@ class App:
                                      db=self.MYSQL_CONFIG["database"],
                                      loop=self.loop,
                                      minsize=10, maxsize=60)
-            self.connector = connector.Connector(
+            self.connector = bitcoindconnector.Connector(
                 loop, self.log , config,
                 tx_handler=self.new_transaction_handler,
                 orphan_handler=None, debug=connector_debug,
                 debug_full = connector_debug_full,
                 start_block=476100)
-            # await self.connector.connected
-            # self.connector.subscribe_blocks()
-            # self.connector.subscribe_transactions()
-            # await self.connector.get_last_block()
+            # await self.bitcoindconnector.connected
+            # self.bitcoindconnector.subscribe_blocks()
+            # self.bitcoindconnector.subscribe_transactions()
+            # await self.bitcoindconnector.get_last_block()
             # if "RPC" in config:
             #     self.rpc = await rpc.start(config["RPC"]["host"], config["RPC"]["port"], self)
             #     self.log.info("RPC outpoint %s:%s" % (config["RPC"]["host"],  config["RPC"]["port"]))
             #
 
-            # self.console = Console(self.connector, self)
-            # await self.connector.connected
-            # self.connector.subscribe_blocks()
-            # self.connector.subscribe_transactions()
-            # await self.connector.get_last_block()
+            # self.console = Console(self.bitcoindconnector, self)
+            # await self.bitcoindconnector.connected
+            # self.bitcoindconnector.subscribe_blocks()
+            # self.bitcoindconnector.subscribe_transactions()
+            # await self.bitcoindconnector.get_last_block()
         except Exception as err:
             self.log.error("Start failed")
             self.log.error(str(traceback.format_exc()))
@@ -124,7 +124,7 @@ class App:
         sys.excepthook = self._exc
         self.log.error('Stop request received')
         if self.connector:
-            self.log.warning("Stop node connector")
+            self.log.warning("Stop node bitcoindconnector")
             await self.connector.stop()
         self.log.info("Test server stopped")
         self.loop.stop()
