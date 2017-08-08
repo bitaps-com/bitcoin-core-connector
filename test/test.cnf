@@ -1,13 +1,7 @@
-[MYSQL]
+[POSTGRESQL]
 
-user = test
-password = simpleprocessing
-host = localhost
-port = 3306
-database = test_btc_core_connector
-
-# mysql_pool_threads default 10
-mysql_pool_threads = 100
+dsn = dbname=btctest2,user=test,password=test,host=127.0.0.1
+pool_threads = 40
 
 [BITCOIND]
 

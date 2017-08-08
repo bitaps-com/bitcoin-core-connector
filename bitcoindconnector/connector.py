@@ -1,5 +1,5 @@
 import asyncio
-import aiomysql
+import aiopg
 import traceback
 import aiohttp
 import time
@@ -14,21 +14,26 @@ from .connector_model import *
 
 class Connector:
 
-    def __init__(self, loop, logger, config,
-                 tx_handler=None, block_handler=None,
-                 orphan_handler=None, debug = False,
-                 debug_full = False,
-                 mysql_pool_size = 50, start_block=None):
-        self.loop = loop
-        self.log = logger
-        self.active = True
-        self.active_block = asyncio.Future()
-        self.active_block.set_result(True)
-        self.session = aiohttp.ClientSession()
-        self.start_block = start_block
-
+    def __init__(self,
+                 bitcoind_rpc_url,
+                 bitcoind_zerromq_url,
+                 postgresql_dsn,
+                 loop,
+                 logger,
+                 start_block=None,
+                 tx_handler=None,
+                 block_handler=None,
+                 orphan_handler=None,
+                 db_pool_size=50,
+                 debug = False,
+                 debug_full = False):
+        """
+        """
         def empty(a=None):
             return None
+
+        self.loop = loop
+        self.log = logger
 
         if debug:
             self.log.info("Connector debug mode")
@@ -47,65 +52,50 @@ class Connector:
             setattr(self.log, 'debugII', empty)
             setattr(self.log, 'debugIII', empty)
 
-        self.rpc_url = config["BITCOIND"]["rpc"]
-        self.zmq_url = config["BITCOIND"]["zeromq"]
+        self.rpc_url = bitcoind_rpc_url
+        self.zmq_url = bitcoind_zerromq_url
+        self.postgresql_dsn = postgresql_dsn
+        self.db_pool_size = db_pool_size
         self.orphan_handler = orphan_handler
-        self.batch_limit = 15
         self.tx_handler = tx_handler
         self.block_handler = block_handler
+        self.start_block = start_block
+
+        self.session = aiohttp.ClientSession()
+        self.active = True
+        self.active_block = asyncio.Future()
+        self.active_block.set_result(True)
+        self.batch_limit = 15
         self.block_txs_request = None
         self.sync = False
         self.sync_requested = False
         self.tx_sub = False
         self.block_sub = False
         self.connected = asyncio.Future()
-        self.mysql_pool_size = mysql_pool_size
-        self.MYSQL_CONFIG = config["MYSQL"]
-        self.log.info("Bitcoind node bitcoindconnector started")
         self.await_tx_list = list()
         self.missed_tx_list = list()
         self.await_tx_id_list = list()
         self.get_missed_tx_threads = 0
         self.get_missed_tx_threads_limit = 100
+        self.tx_in_process = set()
+
         self._watchdog = False
         self._zmq_handler = False
-        self._mysql_pool_conn = False
-        asyncio.ensure_future(self.start(config), loop=self.loop)
+        self._db_pool = False
+        self.log.info("Bitcoind connector started")
+        asyncio.ensure_future(self.start(), loop=self.loop)
 
 
-    async def init_mysql(self):
-        conn = await \
-            aiomysql.connect(user=self.MYSQL_CONFIG["user"],
-                             password=self.MYSQL_CONFIG["password"],
-                             db="",
-                             host=self.MYSQL_CONFIG["host"],
-                             port=int(self.MYSQL_CONFIG["port"]),
-                             loop=self.loop)
-        cur = await conn.cursor()
-        await init_db(self.MYSQL_CONFIG["database"], cur)
-        conn.close()
 
-    async def get_mysql_conn(self):
-        conn = await \
-            aiomysql.connect(user=self.MYSQL_CONFIG["user"],
-                             password=self.MYSQL_CONFIG["password"],
-                             db=self.MYSQL_CONFIG["database"],
-                             host=self.MYSQL_CONFIG["host"],
-                             port=int(self.MYSQL_CONFIG["port"]),
-                             loop=self.loop)
-        return conn
-
-    async def start(self, config):
+    async def start(self):
         try:
-            await self.init_mysql()
-            self._mysql_pool_conn = await \
-                aiomysql.create_pool(host=self.MYSQL_CONFIG["host"],
-                                     port=int(self.MYSQL_CONFIG["port"]),
-                                     user=self.MYSQL_CONFIG["user"],
-                                     password=self.MYSQL_CONFIG["password"],
-                                     db=self.MYSQL_CONFIG["database"],
-                                     loop=self.loop,
-                                     minsize=20, maxsize=self.mysql_pool_size)
+            async with aiopg.connect(dsn=self.postgresql_dsn) as conn:
+                async with conn.cursor() as cur:
+                    await init_db(cur)
+            self._db_pool = await \
+                aiopg.create_pool(dsn=self.postgresql_dsn,
+                                  loop=self.loop,
+                                  minsize=20, maxsize=self.db_pool_size)
         except Exception as err:
             self.log.error("Start failed")
             self.log.error(str(traceback.format_exc()))
@@ -141,8 +131,13 @@ class Connector:
                     except:
                         self.log.error("Transaction decode failed: %s" % hexlify(body).decode())
                     self.loop.create_task(self._new_transaction(tx))
+                if not self.active:
+                    break
+            except asyncio.CancelledError:
+                self.log.debug("handle terminated")
+                break
             except Exception as err:
-                pass
+                self.log.error(str(err))
 
 
 
@@ -151,15 +146,16 @@ class Connector:
         conn = None
         try:
             q = time.time()
-            conn = await self._mysql_pool_conn.acquire()
+            conn = await self._db_pool.acquire()
             cur = await conn.cursor()
-            lock = await get_lock(tx_hash, cur)
-            if not lock:
+            lock = False
+            if tx_hash in self.tx_in_process:
                 raise Exception("AEX %s" % tx_hash)
+            self.tx_in_process.add(tx_hash)
+            lock = True
             # Check is transaction new
             tx_id = await tx_id_by_hash(tx.hash, cur)
             if tx_id is None:
-                # print("new")
                 await cur.execute('START TRANSACTION;')
                 # call external handler
                 r = 0
@@ -186,11 +182,11 @@ class Connector:
                 self.await_tx_list = []
                 self.await_tx_id_list = []
                 self.block_txs_request.cancel()
-
         finally:
+            if lock:
+                self.tx_in_process.remove(tx_hash)
             if conn is not None:
-                await release_lock(tx_hash, cur)
-                self._mysql_pool_conn.release(conn)
+                self._db_pool.release(conn)
 
 
     async def _new_block(self, block):
@@ -222,36 +218,33 @@ class Connector:
             return
         self.active_block = asyncio.Future()
         conn = None
-        lock = False
+        binary_block_hash = unhexlify( block["hash"])
         block_height = int(block["height"])
         next_block_height = block_height + 1
         try:
             self.log.debug("New block")
             bt = time.time()
-            conn = await self._mysql_pool_conn.acquire()
+            conn = await self._db_pool.acquire()
             cur = await conn.cursor()
-            self.log.debug("got mysql connection [%s]" % round(time.time()-bt,4))
+            self.log.debug("got db connection [%s]" % round(time.time()-bt,4))
             q = time.time()
             # blockchain position check
-            lock = await get_lock("_new_block", cur)
-            if not lock:
-                self.log.debugI("can't get lock _new_block")
-                next_block_height = None
-                return
             self.log.debug("New block %s %s" % (block_height, block["hash"]))
             if "previousblockhash" in block:
                 self.log.debugI("Parent hash %s" % block["previousblockhash"])
             # Is this block new?
             tq = time.time()
-            block_id = await block_id_by_hash(block["hash"], cur)
+            block_id = await block_id_by_hash(binary_block_hash, cur)
             self.log.debug("block id form db %s [%s]" % (block_id, round(time.time()-tq,4)))
             if block_id  is not None:
                 self.log.info("block already exist %s" % block["hash"])
                 return
             # Get parent from db
             if "previousblockhash" in block:
-                parent_height = await block_height_by_hash(block["previousblockhash"], cur)
+                binary_previousblock_hash = unhexlify(block["previousblockhash"])
+                parent_height = await block_height_by_hash(binary_previousblock_hash, cur)
             else:
+                binary_previousblock_hash = None
                 parent_height = None
             self.log.debug("parent height "+str(parent_height))
             if parent_height is None:
@@ -288,7 +281,9 @@ class Connector:
             self.log.debug("blockchain position check [%s]" % round(time.time()-q,4))
             # add all block transactions
             q = time.time()
-            tx_id_list, missed = await get_tx_id_list(list(block["tx"]), cur)
+            binary_tx_hash_list = [unhexlify(t)[::-1] for t in block["tx"]]
+            tx_id_list, missed = await get_tx_id_list(binary_tx_hash_list, cur)
+            missed = [bitcoinlib.rh2s(t) for t in missed]
             self.await_tx_id_list = tx_id_list
             self.log.debug("Transactions already exist: %s missed %s [%s]" %
                            (len(tx_id_list), len(missed), round(time.time()-q,4)))
@@ -302,11 +297,11 @@ class Connector:
             if len(block["tx"]) != len(self.await_tx_id_list):
                 self.log.error("get block transactions failed")
                 raise Exception("get block transactions failed")
-            ct = len(self.await_tx_id_list)
-            self.log.debug("Transactions received: %s [%s]" % (ct, round(time.time()-q,4)))
+            tx_count = len(self.await_tx_id_list)
+            self.log.debug("Transactions received: %s [%s]" % (tx_count, round(time.time()-q,4)))
             q = time.time()
-            await insert_new_block(block["hash"], block["height"],
-                                   block["previousblockhash"],
+            await insert_new_block(binary_block_hash, block["height"],
+                                   binary_previousblock_hash,
                                    block["time"],
                                    self.await_tx_id_list, cur)
             self.log.debug("added block to db [%s]" % round(time.time()-q,4))
@@ -319,7 +314,7 @@ class Connector:
                 await self.block_handler(block, cur)
                 self.log.debug("block handler processed [%s]" % round(time.time()-q,4))
             self.log.info("New block %s %s" %(block["height"], block["hash"]))
-            self.log.info("%s transactions %s" %(block["height"], ct))
+            self.log.info("%s transactions %s" %(block["height"], tx_count))
         except Exception as err:
             if self.await_tx_list:
                 self.await_tx_list = []
@@ -328,11 +323,9 @@ class Connector:
             next_block_height = None
         finally:
             self.active_block.set_result(True)
-            if lock:
-                await release_lock("_new_block", cur)
-                self.log.debugI("block  processing completed")
+            self.log.debugI("block  processing completed")
             if conn:
-                self._mysql_pool_conn.release(conn)
+                self._db_pool.release(conn)
             if next_block_height is not None:
                 self.sync_requested = True
                 self.loop.create_task(self.get_block_by_height(next_block_height))
@@ -354,14 +347,15 @@ class Connector:
                     batch.append(["getrawtransaction", self.missed_tx_list.pop()])
                     if len(batch)>=self.batch_limit:
                         break
-                # print(tx_hash)
                 result = await self.rpc.batch(batch)
                 for r in result:
                     d = r["result"]
                     try:
+                        # todo check if we can sent hex string to deserialize
                         tx = bitcoinlib.Transaction.deserialize(io.BytesIO(unhexlify(d)))
                     except:
                         self.log.error("Transaction decode failed: %s" % d)
+                        raise Exception("Transaction decode failed: %s" % d)
                     self.loop.create_task(self._new_transaction(tx))
             except Exception as err:
                 self.log.error("_get_missed exception %s " % str(err))
@@ -382,18 +376,22 @@ class Connector:
 
     async def get_last_block(self):
         self.log.debug("check blockchain status")
+        conn = False
         try:
             d = await self.rpc.getblockcount()
-            conn = await self._mysql_pool_conn.acquire()
+            conn = await self._db_pool.acquire()
             cur = await conn.cursor()
             ld = await get_last_block_height(cur)
+            if ld is None:
+                ld = 0
             if ld >= d:
                 self.log.debug("blockchain is synchronized")
             else:
                 d = await self.rpc.getbestblockhash()
                 await self._get_block_by_hash(d)
         finally:
-            self._mysql_pool_conn.release(conn)
+            if conn:
+                self._db_pool.release(conn)
 
 
 
@@ -417,27 +415,28 @@ class Connector:
         conn = False
         while True:
             try:
-                conn = await self.get_mysql_conn()
-                cur = await conn.cursor()
-                while True:
-                    await asyncio.sleep(60)
-                    count = await unconfirmed_count(cur)
-                    lb_hash = await get_last_block_hash(cur)
-                    height = await block_height_by_hash(lb_hash, cur)
-                    self.log.info("unconfirmed tx %s last block %s" %
-                                  (count, height))
-                    r = await clear_old_tx(cur)
-                    if r["pool"]:
-                        self.log.info("cleared from pool %s not "
-                                      "affected tx" % r["pool"])
-                    if r["blocks"]:
-                        self.log.info("cleared from blocks %s not "
-                                      "affected tx" % r["blocks"])
-                    await self.get_last_block()
+                async with aiopg.connect(dsn=self.postgresql_dsn) as conn:
+                    async with conn.cursor() as cur:
+                        while True:
+                            await asyncio.sleep(60)
+                            count = await unconfirmed_count(cur)
+                            lb_hash = await get_last_block_hash(cur)
+                            height = await block_height_by_hash(lb_hash, cur)
+                            self.log.info("unconfirmed tx %s last block %s" %
+                                          (count, height))
+                            r = await clear_old_tx(cur)
+                            if r["pool"]:
+                                self.log.info("cleared from pool %s not "
+                                              "affected tx" % r["pool"])
+                            if r["blocks"]:
+                                self.log.info("cleared from blocks %s not "
+                                              "affected tx" % r["blocks"])
+                            await self.get_last_block()
             except asyncio.CancelledError:
                 self.log.debug("watchdog terminated")
                 break
             except Exception as err:
+                self.log.error(str(traceback.format_exc()))
                 self.log.error("watchdog error %s " % err)
             finally:
                 if conn:
@@ -458,17 +457,17 @@ class Connector:
         self.log.warning("Destroy zmq")
         if self._zmq_handler:
             self._zmq_handler.cancel()
+            self.log.warning("Cancel zmq handler")
         self.log.warning("New block processing restricted")
         self.active = False
-        await asyncio.sleep(1)
         if not self.active_block.done():
             self.log.warning("Waiting active block task")
             await self.active_block
         self.session.close()
         self.log.warning("Close mysql pool")
-        if self._mysql_pool_conn:
-            self._mysql_pool_conn.close()
-            await self._mysql_pool_conn.wait_closed()
+        if self._db_pool:
+            self._db_pool.close()
+            await self._db_pool.wait_closed()
         self.zmqContext.destroy()
         self.log.debug('Connector ready to shutdown')
 

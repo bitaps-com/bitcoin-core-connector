@@ -35,7 +35,6 @@ class App:
         self.confirm_target = 20
         self.ttc = 0
         self.rpc = False
-        self.MYSQL_CONFIG = config["MYSQL"]
         self.log.info("test state server init ...")
         signal.signal(signal.SIGINT, self.terminate)
         signal.signal(signal.SIGTERM, self.terminate)
@@ -46,22 +45,32 @@ class App:
     async def start(self, config, connector_debug, connector_debug_full):
         # init database
         try:
-            self.log.info("Init mysql pool ")
-            await self.init_mysql()
-            self.mysql_pool = await \
-                aiomysql.create_pool(host=self.MYSQL_CONFIG["host"],
-                                     port=int(self.MYSQL_CONFIG["port"]),
-                                     user=self.MYSQL_CONFIG["user"],
-                                     password=self.MYSQL_CONFIG["password"],
-                                     db=self.MYSQL_CONFIG["database"],
-                                     loop=self.loop,
-                                     minsize=10, maxsize=60)
-            self.connector = bitcoindconnector.Connector(
-                loop, self.log , config,
-                tx_handler=self.new_transaction_handler,
-                orphan_handler=None, debug=connector_debug,
-                debug_full = connector_debug_full,
-                start_block=476100)
+            # self.log.info("Init mysql pool ")
+            # await self.init_mysql()
+            # self.mysql_pool = await \
+            #     aiomysql.create_pool(host=self.MYSQL_CONFIG["host"],
+            #                          port=int(self.MYSQL_CONFIG["port"]),
+            #                          user=self.MYSQL_CONFIG["user"],
+            #                          password=self.MYSQL_CONFIG["password"],
+            #                          db=self.MYSQL_CONFIG["database"],
+            #                          loop=self.loop,
+            #                          minsize=10, maxsize=60)
+            dsn = config['POSTGRESQL']["dsn"].replace(',',' ')
+            pool_threads = config['POSTGRESQL']["pool_threads"]
+            zeromq = config['BITCOIND']["zeromq"]
+            rpc = config['BITCOIND']["rpc"]
+
+
+            self.connector = bitcoindconnector.Connector(rpc,
+                                                         zeromq,
+                                                         dsn,
+                                                         loop,
+                                                         self.log,
+                                                         tx_handler=self.new_transaction_handler,
+                                                         orphan_handler=None,
+                                                         debug=connector_debug,
+                                                         debug_full = connector_debug_full,
+                                                         start_block=476100)
             # await self.bitcoindconnector.connected
             # self.bitcoindconnector.subscribe_blocks()
             # self.bitcoindconnector.subscribe_transactions()
@@ -81,24 +90,24 @@ class App:
             self.log.error(str(traceback.format_exc()))
             # self.terminate(None,None)
 
-    async def init_mysql(self):
-        conn = await \
-            aiomysql.connect(user=self.MYSQL_CONFIG["user"],
-                             password=self.MYSQL_CONFIG["password"],
-                             db="",
-                             host=self.MYSQL_CONFIG["host"],
-                             port=int(self.MYSQL_CONFIG["port"]),
-                             loop=self.loop)
-        db = self.MYSQL_CONFIG["database"]
-        cur = await conn.cursor()
-        await cur.execute("CREATE DATABASE IF NOT EXISTS %s;" % db)
-        await cur.execute("USE %s;" % db)
-        try:
-            pass
-            # await model.init_db(self.MYSQL_CONFIG["database"],  self.config,  cur)
-        except:
-            self.log.error(str(traceback.format_exc()))
-        conn.close()
+    # async def init_mysql(self):
+    #     conn = await \
+    #         aiomysql.connect(user=self.MYSQL_CONFIG["user"],
+    #                          password=self.MYSQL_CONFIG["password"],
+    #                          db="",
+    #                          host=self.MYSQL_CONFIG["host"],
+    #                          port=int(self.MYSQL_CONFIG["port"]),
+    #                          loop=self.loop)
+    #     db = self.MYSQL_CONFIG["database"]
+    #     cur = await conn.cursor()
+    #     await cur.execute("CREATE DATABASE IF NOT EXISTS %s;" % db)
+    #     await cur.execute("USE %s;" % db)
+    #     try:
+    #         pass
+    #         # await model.init_db(self.MYSQL_CONFIG["database"],  self.config,  cur)
+    #     except:
+    #         self.log.error(str(traceback.format_exc()))
+    #     conn.close()
 
 
     async def orphan_block_handler(self, orphan_hash, cur):
@@ -214,6 +223,9 @@ def init(loop, argv):
 
 
     loop = asyncio.get_event_loop()
+
+
+
     app = App(loop, logger, config, connector_debug, connector_debug_full)
     return app
 
