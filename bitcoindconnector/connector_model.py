@@ -91,7 +91,7 @@ async def clear_old_tx(cur, block_exp = 50, unconfirmed_exp = 5):
     height = await get_last_block_height(cur)
     if height is not None:
         await cur.execute("SELECT id FROM Transaction "
-                          "WHERE  height < (%s);",
+                          "WHERE  height < (%s) and affected != 'B1';",
                           (height - block_exp,))
         rows = await cur.fetchall()
         id_list = [row[0] for row in rows]
@@ -126,7 +126,7 @@ async def remove_orphan(orphan_height, cur):
                       "SET height = NULL "
                       "WHERE Transaction.height = %s;", (orphan_height,))
     await cur.execute("DELETE FROM Block " 
-                      "WHERE height = %s;", (orphan_height))
+                      "WHERE height = %s;", (orphan_height,))
     await cur.execute("COMMIT;")
 
 
@@ -192,9 +192,10 @@ async def insert_new_tx(tx_hash, cur, affected=0):
     """
     af = 'B1' if affected else 'B0'
     await cur.execute("INSERT INTO Transaction (hash, affected) "
-                      "VALUES (%s, %s);",
+                      "VALUES (%s, %s) RETURNING id;",
                       (tx_hash, af))
-    return cur.lastrowid
+    [lastrowid,] = await cur.fetchone()
+    return lastrowid
 
 
 async def get_missed_tx(hash_list, cur):

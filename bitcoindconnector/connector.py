@@ -65,7 +65,7 @@ class Connector:
         self.active = True
         self.active_block = asyncio.Future()
         self.active_block.set_result(True)
-        self.batch_limit = 15
+        self.batch_limit = 20
         self.block_txs_request = None
         self.sync = False
         self.sync_requested = False
@@ -76,7 +76,7 @@ class Connector:
         self.missed_tx_list = list()
         self.await_tx_id_list = list()
         self.get_missed_tx_threads = 0
-        self.get_missed_tx_threads_limit = 100
+        self.get_missed_tx_threads_limit = 200
         self.tx_in_process = set()
 
         self._watchdog = False
@@ -95,7 +95,7 @@ class Connector:
             self._db_pool = await \
                 aiopg.create_pool(dsn=self.postgresql_dsn,
                                   loop=self.loop,
-                                  minsize=20, maxsize=self.db_pool_size)
+                                  minsize=50, maxsize=self.db_pool_size)
         except Exception as err:
             self.log.error("Start failed")
             self.log.error(str(traceback.format_exc()))
@@ -142,13 +142,16 @@ class Connector:
 
 
     async def _new_transaction(self, tx):
+        lock = False
         tx_hash = bitcoinlib.rh2s(tx.hash)
         conn = None
         try:
             q = time.time()
             conn = await self._db_pool.acquire()
+            self.log.debug("connection %s %s" % (tx_hash,
+                                              round(time.time() - q, 4)))
+            q = time.time()
             cur = await conn.cursor()
-            lock = False
             if tx_hash in self.tx_in_process:
                 raise Exception("AEX %s" % tx_hash)
             self.tx_in_process.add(tx_hash)
@@ -160,11 +163,14 @@ class Connector:
                 # call external handler
                 r = 0
                 if self.tx_handler:
+                    qh = time.time()
                     r = await self.tx_handler(tx, cur)
+                    self.log.debug("handler %s %s" % (tx_hash,
+                                    round(time.time() - qh, 4)))
                 if r != 1 and r != 0:
                     raise Exception("Transaction handler response error %s"  % tx_hash)
                 tx_id = await insert_new_tx(tx.hash, cur, affected=r)
-                self.log.debugII("%s %s" % (tx_hash,
+                self.log.debug("new tx %s %s" % (tx_hash,
                                 round(time.time() - q, 4)))
                 await cur.execute('COMMIT;')
             if tx_hash in self.await_tx_list:
