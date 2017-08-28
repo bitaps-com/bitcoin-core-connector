@@ -17,6 +17,8 @@ from pythonjsonlogger import jsonlogger
 import warnings
 import zmq
 import aiomysql
+import uvloop
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 warnings.filterwarnings("ignore")
 
