@@ -5,19 +5,17 @@ sys.path.insert(0,parentdir)
 import configparser
 import bitcoindconnector
 import argparse
-import daemon
 import asyncio
 import sys
 import signal
 import traceback
-import re
 import logging
 import colorlog
 from pythonjsonlogger import jsonlogger
 import warnings
 import zmq
-import aiomysql
 import uvloop
+
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 warnings.filterwarnings("ignore")
