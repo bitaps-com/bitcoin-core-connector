@@ -76,6 +76,7 @@ class Connector:
         self.connected = asyncio.Future()
         self.await_tx_list = list()
         self.missed_tx_list = list()
+        self.await_tx_future = dict()
         self.await_tx_id_list = list()
         self.get_missed_tx_threads = 0
         self.get_missed_tx_threads_limit = 50
@@ -148,6 +149,10 @@ class Connector:
         tx_hash = bitcoinlib.rh2s(tx.hash)
         q = tm()
         async with self._db_pool.acquire() as conn:
+            if tx_hash in self.await_tx_list:
+                ft = self.await_tx_future
+            else:
+                ft = None
             self.log.debugIII("connection %s %s" % (tx_hash, tm(q)))
             q = tm()
             if tx_hash in self.tx_in_process:
@@ -168,7 +173,7 @@ class Connector:
                 r = 0
                 if self.tx_handler:
                     qh = tm()
-                    r = await self.tx_handler(tx, conn)
+                    r = await self.tx_handler(tx, ft, conn)
                     self.log.debugII("handler %s %s" % (tx_hash, tm(qh)))
                 if r != 1 and r != 0:
                     raise Exception("Transaction handler response error %s"  % tx_hash)
@@ -181,6 +186,7 @@ class Connector:
                 if tx_hash in self.await_tx_list:
                     self.await_tx_list.remove(tx_hash)
                     self.await_tx_id_list.append(tx_id)
+                    self.await_tx_future[tx_hash].set_result(True)
                     if not self.await_tx_list:
                         self.block_txs_request.set_result(True)
             except Exception as err:
@@ -188,6 +194,9 @@ class Connector:
                     self.await_tx_list = []
                     self.await_tx_id_list = []
                     self.block_txs_request.cancel()
+                    for i in self.await_tx_future:
+                        if not self.await_tx_future[i].done():
+                            self.await_tx_future[i].cancel()
                 await tr.rollback()
                 self.log.error("new transaction error %s " % err)
                 self.log.error(str(traceback.format_exc()))
@@ -293,6 +302,9 @@ class Connector:
                     self.log.debug("Request missed transactions")
                     self.missed_tx_list = list(missed)
                     self.await_tx_list = missed
+                    self.await_tx_future = dict()
+                    for i in missed:
+                        self.await_tx_future[i] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
                     self.loop.create_task(self._get_missed())
                     await asyncio.wait_for(self.block_txs_request, timeout=300)
