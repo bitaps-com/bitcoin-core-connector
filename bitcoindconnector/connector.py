@@ -186,7 +186,7 @@ class Connector:
                 if tx_hash in self.await_tx_list:
                     self.await_tx_list.remove(tx_hash)
                     self.await_tx_id_list.append(tx_id)
-                    self.await_tx_future[tx_hash].set_result(True)
+                    self.await_tx_future[unhexlify(tx_hash)[::-1]].set_result(True)
                     if not self.await_tx_list:
                         self.block_txs_request.set_result(True)
             except Exception as err:
@@ -304,7 +304,7 @@ class Connector:
                     self.await_tx_list = missed
                     self.await_tx_future = dict()
                     for i in missed:
-                        self.await_tx_future[i] = asyncio.Future()
+                        self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
                     self.loop.create_task(self._get_missed())
                     await asyncio.wait_for(self.block_txs_request, timeout=300)
