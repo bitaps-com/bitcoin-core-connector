@@ -3,6 +3,10 @@ from binascii import hexlify, unhexlify
 from asyncpg import BitString
 import time
 
+class DependsTransaction(Exception):
+    def __init__(self, raw_tx_hash):
+        self.raw_tx_hash = raw_tx_hash
+
 def tm(p = None):
     if p is not None:
         return round(time.time() - p, 4)

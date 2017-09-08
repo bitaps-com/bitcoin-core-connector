@@ -189,6 +189,9 @@ class Connector:
                     self.await_tx_future[unhexlify(tx_hash)[::-1]].set_result(True)
                     if not self.await_tx_list:
                         self.block_txs_request.set_result(True)
+            except DependsTransaction as err:
+                self.loop.create_task(self.wait_tx_then_add(err.raw_tx_hash, tx))
+                tx_hash = False
             except Exception as err:
                 if tx_hash in self.await_tx_list:
                     self.await_tx_list = []
@@ -201,9 +204,20 @@ class Connector:
                 self.log.error("new transaction error %s " % err)
                 self.log.error(str(traceback.format_exc()))
             finally:
-                self.tx_in_process.remove(tx_hash)
+                if tx_hash:
+                    self.tx_in_process.remove(tx_hash)
 
 
+    async def wait_tx_then_add(self, raw_tx_hash, tx):
+        tx_hash = bitcoinlib.rh2s(tx.hash)
+        try:
+            if not self.await_tx_future[raw_tx_hash].done():
+                await self.await_tx_future[raw_tx_hash]
+                self.log.debug("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
+            self.loop.create_task(self._new_transaction(tx))
+        except Exception:
+            self.log.debug("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
+            self.tx_in_process.remove(tx_hash)
 
     async def _new_block(self, block):
         """

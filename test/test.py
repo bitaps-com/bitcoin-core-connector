@@ -118,7 +118,7 @@ class App:
         self.log.warning("handler new block %s" % str(data["hash"]))
 
 
-    async def new_transaction_handler(self, data, cur):
+    async def new_transaction_handler(self, data, ft, cur):
         self.log.debugIII("tx_handler:")
         return 0
 
