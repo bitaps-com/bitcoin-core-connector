@@ -393,7 +393,6 @@ class Connector:
                     d = r["result"]
                     try:
                         # todo check if we can sent hex string to deserialize
-                        print(d)
                         tx = bitcoinlib.Transaction.deserialize(io.BytesIO(unhexlify(d)))
                     except:
                         self.log.error("Transaction decode failed: %s" % d)
@@ -405,6 +404,7 @@ class Connector:
                 self.await_tx_list = []
                 self.block_txs_request.cancel()
         self.get_missed_tx_threads -= 1
+
 
 
     async def get_block_by_height(self, height):
