@@ -218,7 +218,7 @@ class Connector:
             if not self.await_tx_future[raw_tx_hash].done():
                 await self.await_tx_future[raw_tx_hash]
                 self.log.warning("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
-            print(len(self.tx_in_process))
+            print(len(self.tx_in_process), ' ', len(self.await_tx_future))
             self.loop.create_task(self._new_transaction(tx))
         except Exception:
             self.log.debug("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
