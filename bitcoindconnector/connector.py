@@ -193,7 +193,6 @@ class Connector:
                 await tr.rollback()
                 self.log.warning("dependency error %s" % bitcoinlib.rh2s(err.raw_tx_hash))
                 self.loop.create_task(self.wait_tx_then_add(err.raw_tx_hash, tx))
-                tx_hash = False
             except Exception as err:
                 if tx_hash in self.await_tx_list:
                     self.await_tx_list = []
