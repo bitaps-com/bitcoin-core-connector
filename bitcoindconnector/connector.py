@@ -208,6 +208,7 @@ class Connector:
             finally:
                 if tx_hash:
                     self.tx_in_process.remove(tx_hash)
+                print(len(self.tx_in_process.remove))
 
 
     async def wait_tx_then_add(self, raw_tx_hash, tx):
@@ -217,6 +218,7 @@ class Connector:
             if not self.await_tx_future[raw_tx_hash].done():
                 await self.await_tx_future[raw_tx_hash]
                 self.log.warning("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
+            print(len(self.tx_in_process.remove))
             self.loop.create_task(self._new_transaction(tx))
         except Exception:
             self.log.debug("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
