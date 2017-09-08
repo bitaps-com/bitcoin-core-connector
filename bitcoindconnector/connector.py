@@ -393,6 +393,7 @@ class Connector:
                     d = r["result"]
                     try:
                         # todo check if we can sent hex string to deserialize
+                        print(d)
                         tx = bitcoinlib.Transaction.deserialize(io.BytesIO(unhexlify(d)))
                     except:
                         self.log.error("Transaction decode failed: %s" % d)
