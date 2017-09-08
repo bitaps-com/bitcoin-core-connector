@@ -206,9 +206,7 @@ class Connector:
                 self.log.error("new transaction error %s " % err)
                 self.log.error(str(traceback.format_exc()))
             finally:
-                if tx_hash:
-                    self.tx_in_process.remove(tx_hash)
-                print(len(self.tx_in_process))
+                self.tx_in_process.remove(tx_hash)
 
 
     async def wait_tx_then_add(self, raw_tx_hash, tx):
