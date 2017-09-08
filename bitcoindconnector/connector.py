@@ -191,7 +191,7 @@ class Connector:
                         self.block_txs_request.set_result(True)
             except DependsTransaction as err:
                 await tr.rollback()
-                self.log.warning("dependency error %s" % bitcoinlib.rh2s(err.raw_tx_hash))
+                self.log.debugII("dependency error %s" % bitcoinlib.rh2s(err.raw_tx_hash))
                 self.loop.create_task(self.wait_tx_then_add(err.raw_tx_hash, tx))
             except Exception as err:
                 if tx_hash in self.await_tx_list:
@@ -202,8 +202,8 @@ class Connector:
                         if not self.await_tx_future[i].done():
                             self.await_tx_future[i].cancel()
                 await tr.rollback()
-                self.log.error("new transaction error %s " % err)
-                self.log.error(str(traceback.format_exc()))
+                self.log.debugII("new transaction error %s " % err)
+                self.log.debugII(str(traceback.format_exc()))
             finally:
                 self.tx_in_process.remove(tx_hash)
 
@@ -211,15 +211,15 @@ class Connector:
     async def wait_tx_then_add(self, raw_tx_hash, tx):
         tx_hash = bitcoinlib.rh2s(tx.hash)
         try:
-            self.log.warning("resolve dependency %s" % bitcoinlib.rh2s(raw_tx_hash))
+            self.log.debugII("resolve dependency %s" % bitcoinlib.rh2s(raw_tx_hash))
             if not self.await_tx_future[raw_tx_hash].done():
                 await self.await_tx_future[raw_tx_hash]
-                self.log.warning("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
-            print(len(self.tx_in_process), ' ', len(self.await_tx_future))
+                self.log.debugII("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
+            # print(len(self.tx_in_process), ' ', len(self.await_tx_future))
             self.loop.create_task(self._new_transaction(tx))
         except Exception as err:
-            print(err)
-            self.log.debug("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
+            # print(err)
+            self.log.debugII("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
             self.tx_in_process.remove(tx_hash)
 
     async def _new_block(self, block):
