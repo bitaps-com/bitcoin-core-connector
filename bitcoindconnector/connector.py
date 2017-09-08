@@ -190,6 +190,7 @@ class Connector:
                     if not self.await_tx_list:
                         self.block_txs_request.set_result(True)
             except DependsTransaction as err:
+                await tr.rollback()
                 self.log.warning("dependency error %s" % bitcoinlib.rh2s(err.raw_tx_hash))
                 self.loop.create_task(self.wait_tx_then_add(err.raw_tx_hash, tx))
                 tx_hash = False
