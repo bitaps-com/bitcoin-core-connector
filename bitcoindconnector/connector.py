@@ -95,7 +95,7 @@ class Connector:
         try:
             conn = await asyncpg.connect(dsn=self.postgresql_dsn)
             await init_db(conn)
-            conn.close()
+            await conn.close()
             self._db_pool = await \
                 asyncpg.create_pool(dsn=self.postgresql_dsn,
                                   loop=self.loop,
@@ -475,7 +475,7 @@ class Connector:
                 self.log.error("watchdog error %s " % err)
             finally:
                 if conn:
-                    conn.close()
+                    await conn.close()
 
 
     async def stop(self):
@@ -502,7 +502,7 @@ class Connector:
         self.session.close()
         self.log.warning("Close mysql pool")
         if self._db_pool:
-            self._db_pool.close()
+            await self._db_pool.close()
         if self.zmqContext:
             self.zmqContext.destroy()
         self.log.debug('Connector ready to shutdown')
