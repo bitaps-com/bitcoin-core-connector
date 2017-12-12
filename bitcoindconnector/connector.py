@@ -315,9 +315,9 @@ class Connector:
                 q = tm()
                 binary_tx_hash_list = [unhexlify(t)[::-1] for t in block["tx"]]
                 tx_id_list, missed = await get_tx_id_list(binary_tx_hash_list, con)
-                missed = [bitcoinlib.rh2s(t) for t in missed]
                 if self.before_block_handler:
                     await self.before_block_handler(block, missed, con)
+                missed = [bitcoinlib.rh2s(t) for t in missed]
                 self.await_tx_id_list = tx_id_list
                 self.log.debug("Transactions already exist: %s missed %s [%s]" % (len(tx_id_list), len(missed), tm(q)))
                 if missed:
@@ -505,7 +505,7 @@ class Connector:
             self.log.warning("Waiting active block task")
             await self.active_block
         self.session.close()
-        self.log.warning("Close mysql pool")
+        self.log.warning("Close db pool")
         if self._db_pool:
             await self._db_pool.close()
         if self.zmqContext:
