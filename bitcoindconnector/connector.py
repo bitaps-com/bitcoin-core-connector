@@ -12,7 +12,6 @@ from .connector_model import *
 import asyncpg
 
 class Connector:
-
     def __init__(self,
                  bitcoind_rpc_url,
                  bitcoind_zerromq_url,
@@ -23,7 +22,10 @@ class Connector:
                  tx_handler=None,
                  block_handler=None,
                  orphan_handler=None,
+                 before_block_handler=None,
                  db_pool_size=50,
+                 batch_limit=20,
+                 rpc_threads_limit=100,
                  debug = False,
                  debug_full = False):
         """
@@ -58,6 +60,7 @@ class Connector:
         self.orphan_handler = orphan_handler
         self.tx_handler = tx_handler
         self.block_handler = block_handler
+        self.before_block_handler = before_block_handler
         self.start_block = start_block
 
         self.session = aiohttp.ClientSession()
@@ -67,7 +70,7 @@ class Connector:
         self.total_received_tx = 0
         self.total_received_tx_time = 0
 
-        self.batch_limit = 20
+        self.batch_limit = batch_limit
         self.block_txs_request = None
         self.sync = False
         self.sync_requested = False
@@ -79,7 +82,7 @@ class Connector:
         self.await_tx_future = dict()
         self.await_tx_id_list = list()
         self.get_missed_tx_threads = 0
-        self.get_missed_tx_threads_limit = 50
+        self.get_missed_tx_threads_limit = rpc_threads_limit
         self.tx_in_process = set()
         self.zmqContext = False
 
@@ -313,6 +316,8 @@ class Connector:
                 binary_tx_hash_list = [unhexlify(t)[::-1] for t in block["tx"]]
                 tx_id_list, missed = await get_tx_id_list(binary_tx_hash_list, con)
                 missed = [bitcoinlib.rh2s(t) for t in missed]
+                if self.before_block_handler:
+                    await self.before_block_handler(block, missed, con)
                 self.await_tx_id_list = tx_id_list
                 self.log.debug("Transactions already exist: %s missed %s [%s]" % (len(tx_id_list), len(missed), tm(q)))
                 if missed:
