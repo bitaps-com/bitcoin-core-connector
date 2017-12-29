@@ -23,6 +23,7 @@ class Connector:
                  block_handler=None,
                  orphan_handler=None,
                  before_block_handler=None,
+                 block_received_handler=None,
                  db_pool_size=50,
                  batch_limit=20,
                  rpc_threads_limit=100,
@@ -61,6 +62,7 @@ class Connector:
         self.tx_handler = tx_handler
         self.block_handler = block_handler
         self.before_block_handler = before_block_handler
+        self.block_received_handler = block_received_handler
         self.start_block = start_block
 
         self.session = aiohttp.ClientSession()
@@ -341,15 +343,17 @@ class Connector:
                 self.total_received_tx_time += tm(q)
                 rate = round(self.total_received_tx/self.total_received_tx_time)
                 self.log.debug("Transactions received: %s [%s] [%s]" % (tx_count, tm(q), rate))
-
-                # insert new block
-                q = tm()
-                await insert_new_block(binary_block_hash,
-                                       block["height"],
-                                       binary_previousblock_hash,
-                                       block["time"],
-                                       self.await_tx_id_list, con)
-                self.log.debug("added block to db [%s]" % tm(q))
+                async with con.transaction():
+                    if self.block_received_handler:
+                        await self.block_received_handler(block, con)
+                    # insert new block
+                    q = tm()
+                    await insert_new_block(binary_block_hash,
+                                           block["height"],
+                                           binary_previousblock_hash,
+                                           block["time"],
+                                           self.await_tx_id_list, con)
+                    self.log.debug("added block to db [%s]" % tm(q))
                 if self.sync == block["height"]:
                     self.sync += 1
                     next_block_height = self.sync
