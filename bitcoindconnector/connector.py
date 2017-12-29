@@ -331,7 +331,7 @@ class Connector:
                         self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
                     self.loop.create_task(self._get_missed())
-                    await asyncio.wait_for(self.block_txs_request, timeout=300)
+                    await asyncio.wait_for(self.block_txs_request, timeout=100)
                 if len(block["tx"]) != len(self.await_tx_id_list):
 
                     self.log.error("get block transactions failed")
