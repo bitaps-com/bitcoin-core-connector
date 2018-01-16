@@ -5,10 +5,11 @@ import time
 import aiojsonrpc
 import zmq
 import zmq.asyncio
-import bitcoinlib
+import pybtc
 import struct
 import io
 from .connector_model import *
+from binascii import hexlify, unhexlify
 import asyncpg
 
 class Connector:
@@ -27,6 +28,8 @@ class Connector:
                  db_pool_size=50,
                  batch_limit=20,
                  rpc_threads_limit=100,
+                 block_timeout = 300,
+                 rpc_timeout = 100,
                  debug = False,
                  debug_full = False):
         """
@@ -59,12 +62,13 @@ class Connector:
         self.postgresql_dsn = postgresql_dsn
         self.db_pool_size = db_pool_size
         self.orphan_handler = orphan_handler
+        self.block_timeout = block_timeout
         self.tx_handler = tx_handler
         self.block_handler = block_handler
         self.before_block_handler = before_block_handler
         self.block_received_handler = block_received_handler
         self.start_block = start_block
-
+        self.rpc_timeout = rpc_timeout
         self.session = aiohttp.ClientSession()
         self.active = True
         self.active_block = asyncio.Future()
@@ -110,7 +114,7 @@ class Connector:
             self.log.error(str(traceback.format_exc()))
             await self.stop()
             return
-        self.rpc = aiojsonrpc.rpc(self.rpc_url, self.loop)
+        self.rpc = aiojsonrpc.rpc(self.rpc_url, self.loop,timeout=self.rpc_timeout)
         self.zmqContext = zmq.asyncio.Context()
         self.zmqSubSocket = self.zmqContext.socket(zmq.SUB)
         self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
@@ -136,7 +140,7 @@ class Connector:
                     self.loop.create_task(self._get_block_by_hash(hexlify(body).decode()))
                 elif topic == b"rawtx":
                     try:
-                        tx = bitcoinlib.Transaction.deserialize(io.BytesIO(body))
+                        tx = pybtc.Transaction.deserialize(io.BytesIO(body))
                     except:
                         self.log.error("Transaction decode failed: %s" % hexlify(body).decode())
                     self.loop.create_task(self._new_transaction(tx))
@@ -151,7 +155,7 @@ class Connector:
 
 
     async def _new_transaction(self, tx):
-        tx_hash = bitcoinlib.rh2s(tx.hash)
+        tx_hash = pybtc.rh2s(tx.hash)
         q = tm()
         async with self._db_pool.acquire() as conn:
             if tx_hash in self.await_tx_list:
@@ -196,7 +200,7 @@ class Connector:
                         self.block_txs_request.set_result(True)
             except DependsTransaction as err:
                 await tr.rollback()
-                self.log.debugII("dependency error %s" % bitcoinlib.rh2s(err.raw_tx_hash))
+                self.log.debugII("dependency error %s" % pybtc.rh2s(err.raw_tx_hash))
                 self.loop.create_task(self.wait_tx_then_add(err.raw_tx_hash, tx))
             except Exception as err:
                 if tx_hash in self.await_tx_list:
@@ -214,17 +218,17 @@ class Connector:
 
 
     async def wait_tx_then_add(self, raw_tx_hash, tx):
-        tx_hash = bitcoinlib.rh2s(tx.hash)
+        tx_hash = pybtc.rh2s(tx.hash)
         try:
-            self.log.debugII("resolve dependency %s" % bitcoinlib.rh2s(raw_tx_hash))
+            self.log.debugII("resolve dependency %s" % pybtc.rh2s(raw_tx_hash))
             if not self.await_tx_future[raw_tx_hash].done():
                 await self.await_tx_future[raw_tx_hash]
-                self.log.debugII("dependency resolved %s" % bitcoinlib.rh2s(raw_tx_hash))
+                self.log.debugII("dependency resolved %s" % pybtc.rh2s(raw_tx_hash))
             # print(len(self.tx_in_process), ' ', len(self.await_tx_future))
             self.loop.create_task(self._new_transaction(tx))
         except Exception as err:
             # print(err)
-            self.log.debugII("dependency failed %s" % bitcoinlib.rh2s(raw_tx_hash))
+            self.log.debugII("dependency failed %s" % pybtc.rh2s(raw_tx_hash))
             self.tx_in_process.remove(tx_hash)
 
     async def _new_block(self, block):
@@ -319,7 +323,7 @@ class Connector:
                 tx_id_list, missed = await get_tx_id_list(binary_tx_hash_list, con)
                 if self.before_block_handler:
                     await self.before_block_handler(block, missed, con)
-                missed = [bitcoinlib.rh2s(t) for t in missed]
+                missed = [pybtc.rh2s(t) for t in missed]
                 self.await_tx_id_list = tx_id_list
                 self.log.debug("Transactions already exist: %s missed %s [%s]" % (len(tx_id_list), len(missed), tm(q)))
                 if missed:
@@ -331,7 +335,7 @@ class Connector:
                         self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
                     self.loop.create_task(self._get_missed())
-                    await asyncio.wait_for(self.block_txs_request, timeout=100)
+                    await asyncio.wait_for(self.block_txs_request, timeout=self.block_timeout)
                 if len(block["tx"]) != len(self.await_tx_id_list):
 
                     self.log.error("get block transactions failed")
@@ -402,7 +406,7 @@ class Connector:
                     d = r["result"]
                     try:
                         # todo check if we can sent hex string to deserialize
-                        tx = bitcoinlib.Transaction.deserialize(io.BytesIO(unhexlify(d)))
+                        tx = pybtc.Transaction.deserialize(io.BytesIO(unhexlify(d)))
                     except:
                         self.log.error("Transaction decode failed: %s" % d)
                         raise Exception("Transaction decode failed: %s" % d)
@@ -461,20 +465,23 @@ class Connector:
             conn = False
             try:
                 conn =  await asyncpg.connect(dsn=self.postgresql_dsn)
+                counter = 0
                 while True:
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(5)
                     count = await unconfirmed_count(conn)
                     lb_hash = await get_last_block_hash(conn)
                     height = await block_height_by_hash(lb_hash, conn)
-                    self.log.info("unconfirmed tx %s last block %s" %
-                                  (count, height))
-                    r = await clear_old_tx(conn)
-                    if r["pool"]:
-                        self.log.info("cleared from pool %s not "
-                                      "affected tx" % r["pool"])
-                    if r["blocks"]:
-                        self.log.info("cleared from blocks %s not "
-                                      "affected tx" % r["blocks"])
+                    if counter == 20:
+                        counter = 0
+                        self.log.info("unconfirmed tx %s last block %s" %
+                                      (count, height))
+                        r = await clear_old_tx(conn)
+                        if r["pool"]:
+                            self.log.info("cleared from pool %s not "
+                                          "affected tx" % r["pool"])
+                        if r["blocks"]:
+                            self.log.info("cleared from blocks %s not "
+                                          "affected tx" % r["blocks"])
                     await self.get_last_block()
             except asyncio.CancelledError:
                 self.log.debug("watchdog terminated")
