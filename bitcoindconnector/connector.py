@@ -462,26 +462,28 @@ class Connector:
         Garbage collection
         """
         while True:
-            conn = False
             try:
-                conn =  await asyncpg.connect(dsn=self.postgresql_dsn)
                 counter = 0
                 while True:
                     await asyncio.sleep(5)
-                    count = await unconfirmed_count(conn)
-                    lb_hash = await get_last_block_hash(conn)
-                    height = await block_height_by_hash(lb_hash, conn)
-                    if counter == 20:
-                        counter = 0
-                        self.log.info("unconfirmed tx %s last block %s" %
-                                      (count, height))
-                        r = await clear_old_tx(conn)
-                        if r["pool"]:
-                            self.log.info("cleared from pool %s not "
-                                          "affected tx" % r["pool"])
-                        if r["blocks"]:
-                            self.log.info("cleared from blocks %s not "
-                                          "affected tx" % r["blocks"])
+                    try:
+                        conn = await asyncpg.connect(dsn=self.postgresql_dsn)
+                        count = await unconfirmed_count(conn)
+                        lb_hash = await get_last_block_hash(conn)
+                        height = await block_height_by_hash(lb_hash, conn)
+                        if counter == 20:
+                            counter = 0
+                            self.log.info("unconfirmed tx %s last block %s" %
+                                          (count, height))
+                            r = await clear_old_tx(conn)
+                            if r["pool"]:
+                                self.log.info("cleared from pool %s not "
+                                              "affected tx" % r["pool"])
+                            if r["blocks"]:
+                                self.log.info("cleared from blocks %s not "
+                                              "affected tx" % r["blocks"])
+                    finally:
+                        await conn.close()
                     await self.get_last_block()
             except asyncio.CancelledError:
                 self.log.debug("watchdog terminated")
@@ -489,9 +491,6 @@ class Connector:
             except Exception as err:
                 self.log.error(str(traceback.format_exc()))
                 self.log.error("watchdog error %s " % err)
-            finally:
-                if conn:
-                    await conn.close()
 
 
     async def stop(self):
