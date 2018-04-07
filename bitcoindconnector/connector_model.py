@@ -54,7 +54,7 @@ async def tx_id_by_hash(tx_hash, conn):
     :param cur:      db cursor
     :return: None or integer
     """
-    stmt = await conn.prepare("SELECT id FROM Transaction  "
+    stmt = await conn.prepare("SELECT id FROM CTransaction  "
                               "WHERE hash =$1  LIMIT 1;")
     tx_id = await stmt.fetchval(tx_hash)
     return tx_id
@@ -84,23 +84,23 @@ async def clear_old_tx(conn, block_exp = 50, unconfirmed_exp = 5):
     block_count = 0
     height = await get_last_block_height(conn)
     if height is not None:
-        stmt = await conn.prepare("SELECT id FROM Transaction "
+        stmt = await conn.prepare("SELECT id FROM CTransaction "
                           "WHERE  height < ($1) and affected != 'B1';")
         rows = await stmt.fetch(height - block_exp)
         id_list = [row[0] for row in rows]
         if id_list:
-            stmt = await conn.prepare("DELETE FROM Transaction "
+            stmt = await conn.prepare("DELETE FROM CTransaction "
                               "WHERE id = ANY ($1);")
             await stmt.fetch(id_list)
         block_count = len(id_list)
-        stmt = await conn.prepare("SELECT id, affected FROM Transaction "
+        stmt = await conn.prepare("SELECT id, affected FROM CTransaction "
                           "WHERE "
                           "height IS NULL "
                           "AND timestamp < $1;")
         rows = await stmt.fetch(int(time.time()) - 60*60*24*unconfirmed_exp)
         id_list = [row[0] for row in rows]
         if id_list:
-            stmt = await conn.prepare("DELETE FROM Transaction "
+            stmt = await conn.prepare("DELETE FROM CTransaction "
                                       "WHERE id = ANY ($1) "
                                       "AND affected = 'B0';")
             await stmt.fetch(id_list)
@@ -114,9 +114,9 @@ async def remove_orphan(orphan_height, conn):
     :param cur: 
     :return: 
     """
-    stmt = await conn.prepare("UPDATE Transaction "
+    stmt = await conn.prepare("UPDATE CTransaction "
                               "SET height = NULL "
-                              "WHERE Transaction.height = $1;")
+                              "WHERE CTransaction.height = $1;")
     await stmt.fetch(orphan_height)
     stmt = await conn.prepare("DELETE FROM Block " 
                               "WHERE height = $1;")
@@ -133,7 +133,7 @@ async def get_tx_id_list(hash_list, conn):
     if not hash_list:
         return ([],[])
     stmt = await conn.prepare("SELECT hash, id "
-                              "FROM Transaction "
+                              "FROM CTransaction "
                               "WHERE hash = ANY($1);")
     rows = await stmt.fetch(hash_list)
     tx_id_list = list()
@@ -165,7 +165,7 @@ async def insert_new_block(block_hash, height,
                           "VALUES ($1, $2, $3, $4);")
         await stmt.fetch(block_hash, height, previous_hash, timestamp)
         if tx_id_list:
-            stmt = await conn.prepare("UPDATE Transaction "
+            stmt = await conn.prepare("UPDATE CTransaction "
                                       "SET height = $1 "
                                       "WHERE  id = ANY($2);")
             await stmt.fetch(height, tx_id_list)
@@ -179,7 +179,7 @@ async def insert_new_tx(tx_hash, conn, affected=0):
     :return: 
     """
     af = BitString('0') if affected else BitString('1')
-    stmt = await conn.prepare("INSERT INTO Transaction (hash, affected) "
+    stmt = await conn.prepare("INSERT INTO CTransaction (hash, affected) "
                      "VALUES ($1, $2) RETURNING id;")
     lastrowid = await stmt.fetchval(tx_hash, af)
     return lastrowid
@@ -193,7 +193,7 @@ async def get_missed_tx(hash_list, conn):
     """
     if not hash_list:
         return hash_list
-    stmt = await conn.prepare("SELECT hash FROM Transaction "
+    stmt = await conn.prepare("SELECT hash FROM CTransaction "
                               "WHERE hash = ANY($1);")
     rows = await stmt.fetch(hash_list)
     for row in rows:
@@ -208,7 +208,7 @@ async def unconfirmed_count(conn):
     :param cur: 
     :return: integer
     """
-    stmt = await conn.prepare("SELECT count(id) FROM Transaction "
+    stmt = await conn.prepare("SELECT count(id) FROM CTransaction "
                               "WHERE height is NULL;")
     count = await stmt.fetchval()
     return count
@@ -228,7 +228,7 @@ async def init_db(conn):
                       "ON Block USING btree (hash);")
 
     await conn.execute("""
-                            CREATE TABLE IF NOT EXISTS Transaction (
+                            CREATE TABLE IF NOT EXISTS CTransaction (
                             id BIGSERIAL PRIMARY KEY,
                             height INT4  DEFAULT NULL,
                             hash bytea NOT NULL,
@@ -237,7 +237,7 @@ async def init_db(conn):
                             );""")
 
     await conn.execute("CREATE INDEX IF NOT EXISTS hash_transaction "
-                      "ON Transaction USING btree (hash);")
+                      "ON CTransaction USING btree (hash);")
 
     await conn.execute("""
                         CREATE OR REPLACE FUNCTION set_timestamp_column() 
@@ -248,5 +248,5 @@ async def init_db(conn):
                         END;
                         $$ language 'plpgsql';""")
 
-    await conn.execute("DROP TRIGGER IF EXISTS before_insert_transaction ON Transaction;")
+    await conn.execute("DROP TRIGGER IF EXISTS before_insert_transaction ON CTransaction;")
 
