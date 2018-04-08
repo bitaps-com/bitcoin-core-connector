@@ -70,7 +70,7 @@ class App:
                                                          orphan_handler=None,
                                                          debug=connector_debug,
                                                          debug_full = connector_debug_full,
-                                                         start_block=476100)
+                                                         start_block=1)
             # await self.bitcoindconnector.connected
             # self.bitcoindconnector.subscribe_blocks()
             # self.bitcoindconnector.subscribe_transactions()
@@ -119,7 +119,7 @@ class App:
 
 
     async def new_transaction_handler(self, data, ft, cur):
-        self.log.debugIII("tx_handler:")
+        self.log.debug("tx_handler:")
         return 0
 
     def _exc(self, a, b, c):
@@ -232,7 +232,6 @@ def init(loop, argv):
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    loop = zmq.asyncio.install()
     app = init(loop, sys.argv[1:])
     loop.run_forever()
     pending = asyncio.Task.all_tasks()

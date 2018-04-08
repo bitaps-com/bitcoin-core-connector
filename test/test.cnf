@@ -1,13 +1,12 @@
 [POSTGRESQL]
 
-dsn = postgres://test:test@127.0.0.1:5432/btctestnet
+dsn = postgres://test2:test@127.0.0.1:5432/test2
 pool_threads = 40
 
 [BITCOIND]
 
-zeromq = tcp://btc.one.bitaps.com:8900
-rpc = http://bitaps:testnetWfefeefsSWd2@btc.one.bitaps.com:8332
-
+zeromq = tcp://127.0.0.1:18900
+rpc = http://bitaps:testnetWfefeefsSWd2@127.0.0.1:18332
 
 
 

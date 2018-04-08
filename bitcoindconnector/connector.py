@@ -189,7 +189,7 @@ class Connector:
 
                 # insert new transaction
                 tx_id = await insert_new_tx(tx.hash, conn, affected=r)
-                self.log.debugIII("new tx %s %s" % (tx_hash,tm(q)))
+                self.log.debug("new tx %s %s" % (tx_hash,tm(q)))
                 await tr.commit()
 
                 if tx_hash in self.await_tx_list:
@@ -334,7 +334,10 @@ class Connector:
                     for i in missed:
                         self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
-                    self.loop.create_task(self._get_missed())
+                    if  len(missed) / len(binary_tx_hash_list) > 0.3:
+                        self.loop.create_task(self._get_missed(block["hash"]))
+                    else:
+                        self.loop.create_task(self._get_missed())
                     await asyncio.wait_for(self.block_txs_request, timeout=self.block_timeout)
                 if len(block["tx"]) != len(self.await_tx_id_list):
 
@@ -385,7 +388,26 @@ class Connector:
             self.log.info("%s block [%s tx] processing time %s" %
                           (block["height"], len(block["tx"]), tm(bt)))
 
-    async def _get_missed(self):
+    async def _get_missed(self, block_hash = False):
+        if block_hash:
+            result = await self.rpc.getblock(block_hash,0)
+            try:
+                t = time.time()
+                block = pybtc.Block.deserialize(result)
+                self.log.info("block downloaded %s" % round(time.time() - t,4))
+                for tx in block.transactions:
+                    self.loop.create_task(self._new_transaction(tx))
+                return
+            except Exception as err:
+                self.log.error("_get_missed exception %s " % str(err))
+                self.log.error(str(traceback.format_exc()))
+                self.await_tx_list = []
+                self.block_txs_request.cancel()
+
+
+
+
+
         if self.get_missed_tx_threads > self.get_missed_tx_threads_limit:
             return
         self.get_missed_tx_threads += 1
