@@ -69,7 +69,6 @@ class Connector:
         self.block_received_handler = block_received_handler
         self.start_block = start_block
         self.rpc_timeout = rpc_timeout
-        self.session = aiohttp.ClientSession()
         self.active = True
         self.active_block = asyncio.Future()
         self.active_block.set_result(True)
@@ -514,7 +513,7 @@ class Connector:
         if not self.active_block.done():
             self.log.warning("Waiting active block task")
             await self.active_block
-        self.session.close()
+        await self.rpc.close()
         self.log.warning("Close db pool")
         if self._db_pool:
             await self._db_pool.close()
