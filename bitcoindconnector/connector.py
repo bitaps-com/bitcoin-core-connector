@@ -480,6 +480,7 @@ class Connector:
         Check new blocks
         Garbage collection
         """
+        self.log.info("Connector watchdog started")
         while True:
             try:
                 counter = 0
