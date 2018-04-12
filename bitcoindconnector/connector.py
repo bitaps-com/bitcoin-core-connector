@@ -502,6 +502,7 @@ class Connector:
                             if r["blocks"]:
                                 self.log.info("cleared from blocks %s not "
                                               "affected tx" % r["blocks"])
+                        counter += 1
                     finally:
                         await conn.close()
                     await self.get_last_block()
