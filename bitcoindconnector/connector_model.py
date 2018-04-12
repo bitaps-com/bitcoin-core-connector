@@ -85,7 +85,7 @@ async def clear_old_tx(conn, block_exp = 50, unconfirmed_exp = 5):
     height = await get_last_block_height(conn)
     if height is not None:
         stmt = await conn.prepare("SELECT id FROM CTransaction "
-                          "WHERE  height < ($1) and affected != 'B1';")
+                          "WHERE  height < ($1);")
         rows = await stmt.fetch(height - block_exp)
         id_list = [row[0] for row in rows]
         if id_list:
@@ -102,7 +102,7 @@ async def clear_old_tx(conn, block_exp = 50, unconfirmed_exp = 5):
         if id_list:
             stmt = await conn.prepare("DELETE FROM CTransaction "
                                       "WHERE id = ANY ($1) "
-                                      "AND affected = 'B0';")
+                                      ";")
             await stmt.fetch(id_list)
         pool_count = len(id_list)
     return {"pool": pool_count, "blocks": block_count}

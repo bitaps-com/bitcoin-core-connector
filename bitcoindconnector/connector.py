@@ -181,10 +181,8 @@ class Connector:
                 r = 0
                 if self.tx_handler:
                     qh = tm()
-                    r = await self.tx_handler(tx, ft, conn)
+                    await self.tx_handler(tx, ft, conn)
                     self.log.debugII("handler %s %s" % (tx_hash, tm(qh)))
-                if r != 1 and r != 0:
-                    raise Exception("Transaction handler response error %s"  % tx_hash)
 
                 # insert new transaction
                 tx_id = await insert_new_tx(tx.hash, conn, affected=r)
