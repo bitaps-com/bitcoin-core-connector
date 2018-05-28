@@ -67,9 +67,6 @@ class App:
                                                          loop,
                                                          self.log,
                                                          tx_handler=self.new_transaction_handler,
-                                                         orphan_handler=None,
-                                                         debug=connector_debug,
-                                                         debug_full = connector_debug_full,
                                                          start_block=1)
             # await self.bitcoindconnector.connected
             # self.bitcoindconnector.subscribe_blocks()
@@ -118,7 +115,7 @@ class App:
         self.log.warning("handler new block %s" % str(data["hash"]))
 
 
-    async def new_transaction_handler(self, data, ft, cur):
+    async def new_transaction_handler(self, data, ft):
         self.log.debug("tx_handler:")
         return 0
 
