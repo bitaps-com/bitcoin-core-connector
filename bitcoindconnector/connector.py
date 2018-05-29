@@ -556,6 +556,7 @@ class Connector:
                 counter = 0
                 while True:
                     await asyncio.sleep(10)
+                    conn = False
                     try:
                         conn = await asyncpg.connect(dsn=self.postgresql_dsn)
                         count = await unconfirmed_count(conn)
@@ -572,7 +573,8 @@ class Connector:
                                 self.log.warning("cleared from blocks %s " % r["blocks"])
                         counter += 1
                     finally:
-                        await conn.close()
+                        if conn:
+                            await conn.close()
                     await self.get_last_block()
             except asyncio.CancelledError:
                 self.log.info("connector watchdog terminated")
