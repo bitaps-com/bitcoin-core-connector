@@ -5,7 +5,7 @@ import time
 import aiojsonrpc
 import zmq
 import zmq.asyncio
-from pybtc import rh2s
+from pybtc import rh2s, s2rh
 import struct
 import io
 from .connector_model import *
