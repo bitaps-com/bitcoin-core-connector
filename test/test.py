@@ -15,6 +15,7 @@ from pythonjsonlogger import jsonlogger
 import warnings
 import zmq
 import uvloop
+import pybtc
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
@@ -40,8 +41,6 @@ class App:
         signal.signal(signal.SIGTERM, self.terminate)
         asyncio.ensure_future(self.start(config, connector_debug, connector_debug_full), loop=self.loop)
 
-
-
     async def start(self, config, connector_debug, connector_debug_full):
         # init database
         try:
@@ -60,16 +59,12 @@ class App:
             zeromq = config['BITCOIND']["zeromq"]
             rpc = config['BITCOIND']["rpc"]
 
-
             self.connector = bitcoindconnector.Connector(rpc,
                                                          zeromq,
                                                          dsn,
                                                          loop,
                                                          self.log,
                                                          tx_handler=self.new_transaction_handler,
-                                                         orphan_handler=None,
-                                                         debug=connector_debug,
-                                                         debug_full = connector_debug_full,
                                                          start_block=1)
             # await self.bitcoindconnector.connected
             # self.bitcoindconnector.subscribe_blocks()
@@ -109,25 +104,23 @@ class App:
     #         self.log.error(str(traceback.format_exc()))
     #     conn.close()
 
-
     async def orphan_block_handler(self, orphan_hash, cur):
         self.log.warning("handler remove orphan %s" % orphan_hash)
-
 
     async def new_block_handler(self, data, cur):
         self.log.warning("handler new block %s" % str(data["hash"]))
 
-
-    async def new_transaction_handler(self, data, ft, cur):
-        self.log.debug("tx_handler:")
-        return 0
+    async def new_transaction_handler(self, data, ft):
+        # pass
+        # self.log.debug("tx_handler:")
+        assert data["rawTx"] == data.serialize(hex=False)
+        # print(pybtc.rh2s(data["txId"]))
 
     def _exc(self, a, b, c):
         return
 
     def terminate(self, a, b):
         self.loop.create_task(self.terminate_coroutine())
-
 
     async def terminate_coroutine(self):
         sys.excepthook = self._exc
@@ -137,7 +130,6 @@ class App:
             await self.connector.stop()
         self.log.info("Test server stopped")
         self.loop.stop()
-
 
 
 def init(loop, argv):
