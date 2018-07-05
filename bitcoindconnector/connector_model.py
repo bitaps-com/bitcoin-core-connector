@@ -1,9 +1,13 @@
 import asyncio
-from pybtc import *
+from pybtc import Transaction, var_int_to_int, read_var_int
+import time
+import io
+
 
 class DependsTransaction(Exception):
     def __init__(self, raw_tx_hash):
         self.raw_tx_hash = raw_tx_hash
+
 
 class Cache():
     def __init__(self, max_size=1000):
@@ -50,17 +54,13 @@ class Cache():
             return 0
 
 
-
-def tm(p = None):
+def tm(p=None):
     if p is not None:
         return round(time.time() - p, 4)
     return time.time()
 
+
 async def get_last_block_height(conn):
-    """
-    :param cur: 
-    :return: None or integer
-    """
     stmt = await conn.prepare("SELECT height "
                               "FROM connector_block "
                               "ORDER BY id DESC LIMIT 1;")
@@ -68,76 +68,46 @@ async def get_last_block_height(conn):
     return h
 
 
-
 async def get_last_block_hash(conn):
-    """
-    :param cur: 
-    :return: None or binary hash 
-    """
     stmt = await conn.prepare("SELECT hash "
                               "FROM  connector_block "
                               "ORDER BY id DESC LIMIT 1;")
     h = await stmt.fetchval()
-    if h is None:
-        return None
     return h
 
 
 async def block_height_by_hash(app, block_hash, conn):
-    """
-    :param block_hash: binary block hash
-    :param cur: 
-    :return:  None or integer
-    """
     if block_hash == app.last_inserted_block[0]:
         return app.last_inserted_block[1]
-    # print("no")
-    # print(app.last_inserted_block)
     stmt = await conn.prepare("SELECT height FROM connector_block "
                               "WHERE "
                               "hash = $1 LIMIT 1;")
     h = await stmt.fetchval(block_hash)
     return h
 
+
 async def load_tx_cache(app, conn):
-    """
-    :param tx_hash:  binary transaction hash
-    :param cur:      db cursor
-    :return: None or integer
-    """
     stmt = await conn.prepare("SELECT hash, id FROM connector_transaction  "
                               "ORDER BY id DESC LIMIT 50000;")
     rows = await stmt.fetch()
-    for row in rows:
-        app.tx_cache.set(row["hash"], row["id"])
+    [app.tx_cache.set(row["hash"], row["id"]) for row in rows]
+
 
 async def load_block_cache(app, conn):
-    """
-    :param tx_hash:  binary transaction hash
-    :param cur:      db cursor
-    :return: None or integer
-    """
     stmt = await conn.prepare("SELECT hash, height FROM connector_block  "
                               "ORDER BY id DESC LIMIT 10000;")
     rows = await stmt.fetch()
-    for row in rows:
-        app.block_cache.set(row["hash"], row["height"])
-
+    [app.block_cache.set(row["hash"], row["height"]) for row in rows]
 
 
 async def block_id_by_hash(app, block_hash, conn):
-    """
-    :param block_hash: binary bock hash 
-    :param cur: 
-    :return: None or integer
-    """
     stmt = await conn.prepare("SELECT id FROM connector_block "
                               "WHERE  hash = $1 LIMIT 1;")
     block_id = await stmt.fetchval(block_hash)
     return block_id
 
 
-async def clear_old_tx(conn, block_exp = 100, unconfirmed_exp = 5):
+async def clear_old_tx(conn, block_exp=100, unconfirmed_exp_days=5):
     """
     :param cur: 
     :param block_exp: number of block depth  
@@ -150,36 +120,27 @@ async def clear_old_tx(conn, block_exp = 100, unconfirmed_exp = 5):
     height = await get_last_block_height(conn)
     if height is not None:
         stmt = await conn.prepare("SELECT id FROM connector_transaction "
-                          "WHERE  height < ($1);")
+                                  "WHERE  height < ($1);")
         rows = await stmt.fetch(height - block_exp)
         id_list = [row[0] for row in rows]
         if id_list:
             stmt = await conn.prepare("DELETE FROM connector_transaction "
-                              "WHERE id = ANY ($1);")
+                                      "WHERE id = ANY ($1);")
             await stmt.fetch(id_list)
         block_count = len(id_list)
         stmt = await conn.prepare("SELECT id FROM connector_transaction "
-                          "WHERE "
-                          "height IS NULL "
-                          "AND timestamp < $1;")
-        rows = await stmt.fetch(int(time.time()) - 60*60*24*unconfirmed_exp)
+                                  "WHERE height IS NULL AND timestamp < $1;")
+        rows = await stmt.fetch(int(time.time()) - 60*60*24*unconfirmed_exp_days)
         id_list = [row[0] for row in rows]
         if id_list:
             stmt = await conn.prepare("DELETE FROM connector_transaction "
-                                      "WHERE id = ANY ($1) "
-                                      ";")
+                                      "WHERE id = ANY ($1);")
             await stmt.fetch(id_list)
         pool_count = len(id_list)
     return {"pool": pool_count, "blocks": block_count}
 
 
 async def remove_orphan(app, conn):
-    """
-    :param orphan_height: integer 
-    :param cur: 
-    :return: 
-    """
-
     stmt = await conn.prepare("UPDATE connector_transaction "
                               "SET height = NULL "
                               "WHERE connector_transaction.height = $1;")
@@ -203,10 +164,10 @@ async def get_tx_id_list(app, hash_list, conn):
         if row:
             cached.append({"hash": h, "id": row})
     if not hash_list:
-        return ([],[])
+        return ([], [])
 
     tx_id_list = list()
-    for row in  cached:
+    for row in cached:
         h = row["hash"]
         if h in hash_list:
             tx_id_list.append(row["id"])
@@ -215,39 +176,23 @@ async def get_tx_id_list(app, hash_list, conn):
 
 
 async def get_last_tx_id(conn):
-    """
-    """
     stmt = await conn.prepare("SELECT id "
                               "FROM connector_transaction "
                               "ORDER BY id DESC LIMIT 1;")
     tx_id = await stmt.fetchval()
-    if not tx_id:
-        tx_id = 0
-    return tx_id
+    return tx_id if tx_id else 0
+
 
 async def get_last_block_id(conn):
-    """
-    """
     stmt = await conn.prepare("SELECT id "
                               "FROM connector_block "
                               "ORDER BY id DESC LIMIT 1;")
-    tx_id = await stmt.fetchval()
-    if not tx_id:
-        tx_id = 0
-    return tx_id
+    block_id = await stmt.fetchval()
+    return block_id if block_id else 0
 
-async def insert_new_block(app, block_hash,
-                           height,
-                           previous_hash,
-                           timestamp, conn):
-    """
-    :param block_hash: binary hash
-    :param height: integer
-    :param previous_hash: binary hash
-    :param timestamp: integer
-    :param cur: 
-    :return: 
-    """
+
+async def insert_new_block(app, block_hash, height,
+                           previous_hash, timestamp, conn):
     app.last_block_id += 1
     block_id = app.last_block_id
     await conn.copy_records_to_table('connector_block',
@@ -256,25 +201,22 @@ async def insert_new_block(app, block_hash,
                                                block_hash,
                                                height,
                                                previous_hash,
-                                               timestamp),])
+                                               timestamp)])
     app.last_inserted_block = [block_hash, height]
 
 async def update_block_height(app, height, tx_id_list):
     if app.active:
-        async with app._db_pool.acquire() as conn:
-            stmt = await conn.prepare("UPDATE connector_transaction "
-                                      "SET height = $1 "
-                                      "WHERE  id  in (select(unnest($2::BIGINT[])));")
-            await stmt.fetch(height, tx_id_list)
+        try:
+            async with app._db_pool.acquire() as conn:
+                stmt = await conn.prepare("UPDATE connector_transaction "
+                                          "SET height = $1 "
+                                          "WHERE  id  in (select(unnest($2::BIGINT[])));")
+                await stmt.fetch(height, tx_id_list)
+        except:
+            app.log.error("Update block height failed")
 
 
 async def insert_new_tx(app, tx_hash):
-    """
-    :param tx_hash: binary hash 
-    :param cur: 
-    :param affected: integer 1
-    :return: 
-    """
     app.last_tx_id += 1
     tx_id = app.last_tx_id
     app.add_tx_future[tx_hash] = {"insert": asyncio.Future(),
@@ -286,10 +228,12 @@ async def insert_new_tx(app, tx_hash):
     app.add_tx_future.pop(tx_hash)
     return tx_id
 
+
 async def insert_new_tx_batch(batch, conn):
     await conn.copy_records_to_table('connector_transaction',
                                      columns=["id", "hash", "timestamp"],
                                      records=batch)
+
 
 async def get_missed_tx(hash_list, conn):
     """
@@ -310,10 +254,6 @@ async def get_missed_tx(hash_list, conn):
 
 
 async def unconfirmed_count(conn):
-    """
-    :param cur: 
-    :return: integer
-    """
     stmt = await conn.prepare("SELECT count(id) FROM connector_transaction "
                               "WHERE height is NULL;")
     count = await stmt.fetchval()
@@ -346,18 +286,18 @@ async def init_db(conn):
 
 
 def get_stream(stream):
-    if type(stream) != io.BytesIO:
-        if type(stream) == str:
-            stream = unhexlify(stream)
-        if type(stream) == bytes:
+    if not isinstance(stream, io.BytesIO):
+        if isinstance(stream, str):
+            stream = bytes.fromhex(stream)
+        if isinstance(stream, bytes):
             stream = io.BytesIO(stream)
         else:
-            raise TypeError
+            raise TypeError("object should be bytes or HEX encoded string")
     return stream
 
 
 def decode_block_tx(block):
     stream = get_stream(block)
     stream.seek(80)
-    return {i: Transaction(stream) for i in range(var_int_to_int(read_var_int(stream)))}
+    return {i: Transaction(stream, format="raw") for i in range(var_int_to_int(read_var_int(stream)))}
 

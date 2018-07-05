@@ -5,12 +5,13 @@ import time
 import aiojsonrpc
 import zmq
 import zmq.asyncio
-import pybtc
+from pybtc import rh2s
 import struct
 import io
 from .connector_model import *
 from binascii import hexlify, unhexlify
 import asyncpg
+
 
 class Connector:
     def __init__(self,
@@ -27,10 +28,11 @@ class Connector:
                  block_received_handler=None,
                  batch_limit=20,
                  rpc_threads_limit=100,
-                 block_timeout = 300,
-                 rpc_timeout = 100,
-                 external_dublicate_filter = False,
-                 external_cache_loader = None):
+                 block_timeout=300,
+                 rpc_timeout=100,
+                 external_dublicate_filter=False,
+                 external_cache_loader=None,
+                 preload=False):
         self.loop = loop
         self.log = logger
         self.rpc_url = bitcoind_rpc_url
@@ -53,9 +55,11 @@ class Connector:
         self.total_received_tx_time = 0
         self.node_last_block = 0
         self.block_dependency_tx = 0
+
         # dev
-        self.block_preload = Cache(max_size=500)
-        self.block_hashes_preload = Cache(max_size=500)
+        self.preload = preload
+        self.block_preload = Cache(max_size=50000)
+        self.block_hashes_preload = Cache(max_size=50000)
 
         self.tx_cache = Cache(max_size=50000)
         self.block_cache = Cache(max_size=10000)
@@ -81,13 +85,10 @@ class Connector:
         self.get_missed_tx_threads_limit = rpc_threads_limit
         self.tx_in_process = set()
         self.zmqContext = False
-
         self._db_pool = False
         self.tasks = list()
         self.log.info("Bitcoind connector started")
         asyncio.ensure_future(self.start(), loop=self.loop)
-
-
 
     async def start(self):
         try:
@@ -106,11 +107,11 @@ class Connector:
                                                       min_size=50,
                                                       max_size=50)
         except Exception as err:
-            self.log.error("Bitcoind connector start failed")
-            self.log.error(str(traceback.format_exc()))
+            self.log.error("Bitcoind connector start failed: %s", err)
+            self.log.debug(str(traceback.format_exc()))
             await self.stop()
             return
-        self.rpc = aiojsonrpc.rpc(self.rpc_url, self.loop,timeout=self.rpc_timeout)
+        self.rpc = aiojsonrpc.rpc(self.rpc_url, self.loop, timeout=self.rpc_timeout)
         self.zmqContext = zmq.asyncio.Context()
         self.zmqSubSocket = self.zmqContext.socket(zmq.SUB)
         self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
@@ -119,28 +120,29 @@ class Connector:
         self.tasks.append(self.loop.create_task(self.zeromq_handler()))
         self.tasks.append(self.loop.create_task(self.watchdog()))
         self.connected.set_result(True)
-        # self.loop.create_task(self.preload_block())
-        # self.loop.create_task(self.preload_block_hashes())
+        if self.preload:
+            print("preload")
+            self.loop.create_task(self.preload_block())
+            self.loop.create_task(self.preload_block_hashes())
         self.loop.create_task(self.get_last_block())
 
-
-    async def zeromq_handler(self) :
+    async def zeromq_handler(self):
         while True:
             try:
                 msg = await self.zmqSubSocket.recv_multipart()
                 topic = msg[0]
                 body = msg[1]
                 if len(msg[-1]) == 4:
-                  msgSequence = struct.unpack('<I', msg[-1])[-1]
+                    msg_sequence = struct.unpack('<I', msg[-1])[-1]
                 if topic == b"hashblock":
                     hash = hexlify(body).decode()
                     self.log.warning("New block %s" % hash)
                     self.loop.create_task(self._get_block_by_hash(hash))
                 elif topic == b"rawtx":
                     try:
-                        tx = Transaction(body)
+                        tx = Transaction(body, format="raw")
                     except:
-                        self.log.error("Transaction decode failed: %s" % hexlify(body).decode())
+                        self.log.critical("Transaction decode failed: %s" % body.hex())
                     self.loop.create_task(self._new_transaction(tx))
                 if not self.active:
                     break
@@ -151,7 +153,7 @@ class Connector:
                 self.log.error(str(err))
 
     async def _new_transaction(self, tx):
-        tx_hash = pybtc.rh2s(tx["hash"])
+        tx_hash = rh2s(tx["txId"])
         ft = self.await_tx_future if tx_hash in self.await_tx_list else None
         if tx_hash in self.tx_in_process:
             return
@@ -164,14 +166,11 @@ class Connector:
         try:
             # call external handler
             if self.tx_handler:
-               r = await self.tx_handler(tx, ft)
+                tx_id = await self.tx_handler(tx, ft)
             # insert new transaction to dublicate filter
-            if self.external_dublicate_filter:
-                tx_id = r
-            else:
-                tx_id = await insert_new_tx(self, tx["hash"])
-            # self.log.debug("new tx %s %s" % (tx_hash,tm(q)))
-            self.tx_cache.set(tx["hash"], tx_id)
+            if not self.external_dublicate_filter:
+                tx_id = await insert_new_tx(self, tx["txId"])
+            self.tx_cache.set(tx["txId"], tx_id)
             if tx_hash in self.await_tx_list:
                 self.await_tx_list.remove(tx_hash)
                 self.await_tx_id_list.append(tx_id)
@@ -217,7 +216,7 @@ class Connector:
         5 after block add handelr 
         6 ask next block
         """
-        if not self.active  or not self.active_block.done():
+        if not self.active or not self.active_block.done():
             return
         if block is None:
             self.sync = False
@@ -226,13 +225,13 @@ class Connector:
         self.active_block = asyncio.Future()
 
         binary_block_hash = unhexlify(block["hash"])
-        binary_previousblock_hash = unhexlify(block["previousblockhash"]) \
-                                    if "previousblockhash" in block else None
+        binary_previousblock_hash = \
+            unhexlify(block["previousblockhash"]) \
+            if "previousblockhash" in block else None
         block_height = int(block["height"])
         next_block_height = block_height + 1
         self.log.info("New block %s %s" % (block_height, block["hash"]))
         bt = q = tm()
-
         try:
             async with self._db_pool.acquire() as con:
                 # blockchain position check
@@ -263,7 +262,7 @@ class Connector:
                             await remove_orphan(self, con)
                             self.log.info("remove orphan %s [%s]" % (self.last_block_height, tm(tq)))
                         next_block_height -= 2
-                        if next_block_height>self.last_block_height:
+                        if next_block_height > self.last_block_height:
                             next_block_height = self.last_block_height + 1
                         if self.sync and next_block_height >= self.sync:
                             if self.sync_requested:
@@ -282,21 +281,19 @@ class Connector:
                             tq = tm()
                             await self.orphan_handler(self.last_block_height, con)
                             self.log.info("orphan handler  %s [%s]" % (self.last_block_height, tm(tq)))
-                        tq = tm()
                         await remove_orphan(self, con)
                         next_block_height -= 1
                         self.log.debug("requested %s" % next_block_height)
                         return
-
                 self.log.debug("blockchain position check [%s]" % tm(q))
 
                 # add all block transactions
                 q = tm()
                 binary_tx_hash_list = [unhexlify(t)[::-1] for t in block["tx"]]
-                kt = time.time()
-                if block["height"] == 91842:
+                if block["height"] in (91842, 91880):
                     # BIP30 Fix
                     self.tx_cache.pop(s2rh("d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599"))
+                    self.tx_cache.pop(s2rh("e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468"))
                 tx_id_list, missed = await get_tx_id_list(self, binary_tx_hash_list, con)
                 assert len(tx_id_list)+len(missed) == len(block["tx"])
                 self.await_tx_id_list = tx_id_list
@@ -310,8 +307,7 @@ class Connector:
                         self.await_tx_id_list = self.await_tx_id_list + [0 for i in range(len(missed))]
                         missed = []
                 cq = tm()
-                missed = [pybtc.rh2s(t) for t in missed]
-
+                missed = [rh2s(t) for t in missed]
                 self.log.info("Transactions already exist: %s missed %s [%s]" % (len(tx_id_list), len(missed), tm(q)))
                 if missed:
                     self.log.debug("Request missed transactions")
@@ -321,18 +317,22 @@ class Connector:
                     for i in missed:
                         self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
-                    if  len(missed) / len(binary_tx_hash_list) > 0.3:
+                    if len(missed) / len(block["tx"]) > 0.3:
                         self.loop.create_task(self._get_missed(block["hash"]))
                     else:
                         self.loop.create_task(self._get_missed())
-                    await asyncio.wait_for(self.block_txs_request, timeout=self.block_timeout)
-
+                    try:
+                        await asyncio.wait_for(self.block_txs_request, timeout=self.block_timeout)
+                    except asyncio.CancelledError:
+                        # refresh rpc connection session
+                        await self.rpc.close()
+                        self.rpc = aiojsonrpc.rpc(self.rpc_url, self.loop, timeout=self.rpc_timeout)
+                        raise RuntimeError("block transaction request timeout")
                 if len(block["tx"]) != len(self.await_tx_id_list):
-
                     self.log.error("get block transactions failed")
                     self.log.error(str(self.await_tx_id_list))
-
                     raise Exception("get block transactions failed")
+
                 tx_count = len(self.await_tx_id_list)
                 self.total_received_tx += tx_count
                 self.total_received_tx_time += tm(q)
@@ -346,12 +346,12 @@ class Connector:
                                            block["height"],
                                            binary_previousblock_hash,
                                            block["time"], con)
-                    self.loop.create_task(update_block_height(self, block["height"],
-                                                              list(self.await_tx_id_list)))
+                    if not self.external_dublicate_filter:
+                        self.loop.create_task(update_block_height(self, block["height"],
+                                                                  list(self.await_tx_id_list)))
                 if self.sync == block["height"]:
                     self.sync += 1
                     next_block_height = self.sync
-
                 # after block added handler
                 if self.block_handler:
                     await self.block_handler(block, con)
@@ -378,22 +378,20 @@ class Connector:
                            len(self.block_hashes_preload._store),
                            len(self.block_preload._store)))
 
-
     async def wait_tx_then_add(self, raw_tx_hash, tx):
-        tx_hash = pybtc.rh2s(tx["hash"])
+        tx_hash = rh2s(tx["hash"])
         try:
             if not self.await_tx_future[raw_tx_hash].done():
                 await self.await_tx_future[raw_tx_hash]
             self.loop.create_task(self._new_transaction(tx))
-        except Exception as err:
+        except:
             self.tx_in_process.remove(tx_hash)
 
     async def tx_batch(self):
         if self.tx_batch_active:
             return
         self.tx_batch_active = True
-        batch = []
-        hash_list = set()
+        batch, hash_list = [], set()
         try:
             for f in self.add_tx_future:
                 if not self.add_tx_future[f]["insert"].done():
@@ -409,7 +407,7 @@ class Connector:
         finally:
             self.tx_batch_active = False
 
-    async def _get_missed(self, block_hash = False):
+    async def _get_missed(self, block_hash=False):
         if block_hash:
             t = time.time()
             block = self.block_preload.pop(block_hash)
@@ -418,7 +416,7 @@ class Connector:
             try:
                 if not block:
                     block = decode_block_tx(result)
-                self.log.info("block downloaded %s" % round(time.time() - t,4))
+                self.log.info("block downloaded %s" % round(time.time() - t, 4))
                 for tx in block:
                     self.loop.create_task(self._new_transaction(block[tx]))
                 return
@@ -441,15 +439,15 @@ class Connector:
                 batch = list()
                 while self.missed_tx_list:
                     batch.append(["getrawtransaction", self.missed_tx_list.pop()])
-                    if len(batch)>=self.batch_limit:
+                    if len(batch) >= self.batch_limit:
                         break
                 result = await self.rpc.batch(batch)
                 for r in result:
                     try:
-                        tx = Transaction(r["result"])
+                        tx = Transaction(r["result"], format="raw")
                     except:
-                        self.log.error("Transaction decode failed: %s" % d)
-                        raise Exception("Transaction decode failed: %s" % d)
+                        self.log.error("Transaction decode failed: %s" % r["result"])
+                        raise Exception("Transaction decode failed")
                     self.loop.create_task(self._new_transaction(tx))
             except Exception as err:
                 self.log.error("_get_missed exception %s " % str(err))
@@ -457,8 +455,6 @@ class Connector:
                 self.await_tx_list = []
                 self.block_txs_request.cancel()
         self.get_missed_tx_threads -= 1
-
-
 
     async def get_block_by_height(self, height):
         try:
@@ -474,9 +470,9 @@ class Connector:
 
     async def get_last_block(self):
         self.log.debug("check blockchain status")
-        d = await self.rpc.getblockcount()
-        self.node_last_block = d
         try:
+            d = await self.rpc.getblockcount()
+            self.node_last_block = d
             async with self._db_pool.acquire() as con:
                 ld = await get_last_block_height(con)
                 if ld is None:
@@ -489,61 +485,67 @@ class Connector:
         except Exception as err:
             self.log.error("get last block failed %s" % str(err))
 
-
-
-
     async def _get_block_by_hash(self, hash):
         if not self.active:
                 return
         self.log.debug("get block by hash %s" % hash)
         try:
-            block =  self.block_hashes_preload.pop(hash)
+            block = self.block_hashes_preload.pop(hash)
             if not block:
                 block = await self.rpc.getblock(hash)
-            assert  block["hash"] == hash
+            assert block["hash"] == hash
             self.loop.create_task(self._new_block(block))
         except Exception:
             self.log.error("get block by hash %s FAILED" % hash)
 
-
     async def preload_block_hashes(self):
         while True:
-            async with self._db_pool.acquire() as con:
-                start_height = await  get_last_block_height(con)
-            height = start_height + 10
-            d = await self.rpc.getblockcount()
-            if d > height:
-                while True:
-                    height += 1
-                    d = await self.rpc.getblockhash(height)
-                    ex = self.block_preload.get(d)
-                    if not ex:
-                        b = await self.rpc.getblock(d)
-                        self.block_hashes_preload.set(d, b)
-                    if start_height + 200 < height:
-                        break
-            await asyncio.sleep(30)
+            try:
+                async with self._db_pool.acquire() as con:
+                    start_height = await  get_last_block_height(con)
+                height = start_height + 10
+                d = await self.rpc.getblockcount()
+                if d > height:
+                    while True:
+                        height += 1
+                        d = await self.rpc.getblockhash(height)
+                        ex = self.block_preload.get(d)
+                        if not ex:
+                            b = await self.rpc.getblock(d)
+                            self.block_hashes_preload.set(d, b)
+                        if start_height + 15000 < height:
+                            break
+            except asyncio.CancelledError:
+                self.log.info("connector preload_block_hashes terminated")
+                break
+            except:
+                pass
+            await asyncio.sleep(10)
 
     async def preload_block(self):
         while True:
-            async with self._db_pool.acquire() as con:
-                start_height = await  get_last_block_height(con)
-            height = start_height + 10
-            d = await self.rpc.getblockcount()
-            if d > height:
-                while True:
-                    height += 1
-                    d = await self.rpc.getblockhash(height)
-                    ex = self.block_preload.get(d)
-                    if not ex:
-                        b = await self.rpc.getblock(d, 0)
-                        block = decode_block_tx(b)
-                        self.block_preload.set(d, block)
-                    if start_height + 200 < height:
-                        break
-                    print(height - start_height)
-            await asyncio.sleep(300)
-
+            try:
+                async with self._db_pool.acquire() as con:
+                    start_height = await  get_last_block_height(con)
+                height = start_height + 10
+                d = await self.rpc.getblockcount()
+                if d > height:
+                    while True:
+                        height += 1
+                        d = await self.rpc.getblockhash(height)
+                        ex = self.block_preload.get(d)
+                        if not ex:
+                            b = await self.rpc.getblock(d, 0)
+                            block = decode_block_tx(b)
+                            self.block_preload.set(d, block)
+                        if start_height + 15000 < height:
+                            break
+            except asyncio.CancelledError:
+                self.log.info("connector preload_block terminated")
+                break
+            except:
+                pass
+            await asyncio.sleep(15)
 
     async def watchdog(self):
         """
@@ -564,7 +566,7 @@ class Connector:
                         height = await block_height_by_hash(self, lb_hash, conn)
                         if counter == 20 and not self.external_dublicate_filter:
                             counter = 0
-                            self.log.info("unconfirmed tx %s last block %s" %
+                            self.log.info("filter tx %s last block %s" %
                                           (count, height))
                             r = await clear_old_tx(conn)
                             if r["pool"]:
@@ -582,7 +584,6 @@ class Connector:
             except Exception as err:
                 self.log.error(str(traceback.format_exc()))
                 self.log.error("watchdog error %s " % err)
-
 
     async def stop(self):
         self.active = False
