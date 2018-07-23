@@ -20,6 +20,7 @@ class Connector:
                  postgresql_dsn,
                  loop,
                  logger,
+                 postgresql_pool_max_size=5,
                  start_block=None,
                  tx_handler=None,
                  block_handler=None,
@@ -35,6 +36,7 @@ class Connector:
                  preload=False):
         self.loop = loop
         self.log = logger
+        self.postgresql_pool_max_size = postgresql_pool_max_size
         self.rpc_url = bitcoind_rpc_url
         self.zmq_url = bitcoind_zerromq_url
         self.postgresql_dsn = postgresql_dsn
@@ -104,8 +106,8 @@ class Connector:
             await load_block_cache(self, conn)
             await conn.close()
             self._db_pool = await asyncpg.create_pool(dsn=self.postgresql_dsn,
-                                                      min_size=50,
-                                                      max_size=50)
+                                                      min_size=1,
+                                                      max_size=self.postgresql_pool_max_size)
         except Exception as err:
             self.log.error("Bitcoind connector start failed: %s", err)
             self.log.debug(str(traceback.format_exc()))
