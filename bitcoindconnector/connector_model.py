@@ -2,7 +2,7 @@ import asyncio
 from pybtc import Transaction, var_int_to_int, read_var_int
 import time
 import io
-
+from collections import OrderedDict
 
 class DependsTransaction(Exception):
     def __init__(self, raw_tx_hash):
@@ -11,20 +11,24 @@ class DependsTransaction(Exception):
 
 class Cache():
     def __init__(self, max_size=1000):
-        self._store = dict()
-        self._keys = set()
+        self._store = OrderedDict()
         self._max_size = max_size
+        self.clear_tail = False
         self._requests = 0
         self._hit = 0
 
     def set(self, key, value):
         self._check_limit()
-        self._keys.add(key)
         self._store[key] = value
 
     def _check_limit(self):
-        if len(self._keys) >= self._max_size:
-            self._store.pop(self._keys.pop())
+        if len(self._store) >= self._max_size:
+            self.clear_tail = True
+        if self.clear_tail:
+            if len(self._store) >= int(self._max_size * 0.75):
+                [self._store.popitem(last=False) for i in range(20)]
+            else:
+                self.clear_tail = False
 
     def get(self, key):
         self._requests += 1
@@ -38,9 +42,10 @@ class Cache():
     def pop(self, key):
         self._requests += 1
         try:
-            self._keys.remove(key)
+            data = self._store[key]
+            del self._store[key]
             self._hit += 1
-            return self._store.pop(key)
+            return data
         except:
             return None
 
