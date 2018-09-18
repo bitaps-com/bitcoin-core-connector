@@ -411,6 +411,7 @@ class Connector:
 
     async def _get_missed(self, block_hash=False):
         if block_hash:
+            print('request block')
             t = time.time()
             block = self.block_preload.pop(block_hash)
             if not block:
