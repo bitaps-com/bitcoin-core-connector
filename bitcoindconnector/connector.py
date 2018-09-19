@@ -421,7 +421,7 @@ class Connector:
                     block = decode_block_tx(result)
                 self.log.info("block downloaded %s" % round(time.time() - t, 4))
                 for tx in block:
-                    if rh2s(tx) in self.missed_tx_list:
+                    if rh2s(block[tx][txId]) in self.missed_tx_list:
                         self.loop.create_task(self._new_transaction(block[tx]))
                 return
             except Exception as err:
