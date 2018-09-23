@@ -154,7 +154,11 @@ class Connector:
             except Exception as err:
                 self.log.error(str(err))
 
-    async def _new_transaction(self, tx, block_time = None):
+    async def _new_transaction(self,
+                               tx,
+                               block_time = None,
+                               block_height = None,
+                               block_index = None):
         tx_hash = rh2s(tx["txId"])
         ft = self.await_tx_future if tx_hash in self.await_tx_list else None
         if tx_hash in self.tx_in_process:
@@ -168,7 +172,11 @@ class Connector:
         try:
             # call external handler
             if self.tx_handler:
-                tx_id = await self.tx_handler(tx, ft, block_time)
+                tx_id = await self.tx_handler(tx,
+                                              ft,
+                                              block_time,
+                                              block_height,
+                                              block_index)
             # insert new transaction to dublicate filter
             if not self.external_dublicate_filter:
                 tx_id = await insert_new_tx(self, tx["txId"])
@@ -320,9 +328,15 @@ class Connector:
                         self.await_tx_future[unhexlify(i)[::-1]] = asyncio.Future()
                     self.block_txs_request = asyncio.Future()
                     if len(missed) == len(block["tx"]):
-                        self.loop.create_task(self._get_missed(block["hash"], block["time"]))
+                        self.loop.create_task(self._get_missed(block["hash"],
+                                                               block["time"],
+                                                               block["height"]
+                                                              ))
                     else:
-                        self.loop.create_task(self._get_missed(False, block["time"]))
+                        self.loop.create_task(self._get_missed(False,
+                                                               block["time"],
+                                                               block["height"]
+                                                              ))
                     try:
                         await asyncio.wait_for(self.block_txs_request, timeout=self.block_timeout)
                     except asyncio.CancelledError:
@@ -409,9 +423,12 @@ class Connector:
         finally:
             self.tx_batch_active = False
 
-    async def _get_missed(self, block_hash=False, block_time=None):
+    async def _get_missed(self,
+                          block_hash=False,
+                          block_time=None,
+                          block_height=None
+                         ):
         if block_hash:
-            print('request block')
             t = time.time()
             block = self.block_preload.pop(block_hash)
             if not block:
@@ -420,9 +437,13 @@ class Connector:
                 if not block:
                     block = decode_block_tx(result)
                 self.log.info("block downloaded %s" % round(time.time() - t, 4))
-                for tx in block:
+                for index, tx in enumerate(block):
                     if rh2s(block[tx]["txId"]) in self.missed_tx_list:
-                        self.loop.create_task(self._new_transaction(block[tx], block_time))
+                        self.loop.create_task(self._new_transaction(block[tx],
+                                                                    block_time,
+                                                                    block_height,
+                                                                    index
+                                                                   ))
                 return
             except Exception as err:
                 self.log.error("_get_missed exception %s " % str(err))
@@ -435,7 +456,7 @@ class Connector:
         self.get_missed_tx_threads += 1
         # start more threads
         if len(self.missed_tx_list) > 1:
-            self.loop.create_task(self._get_missed(False, block_time))
+            self.loop.create_task(self._get_missed(False, block_time, block_height))
         while True:
             if not self.missed_tx_list:
                 break
@@ -452,7 +473,11 @@ class Connector:
                     except:
                         self.log.error("Transaction decode failed: %s" % r["result"])
                         raise Exception("Transaction decode failed")
-                    self.loop.create_task(self._new_transaction(tx, block_time))
+                    self.loop.create_task(self._new_transaction(tx,
+                                                                block_time,
+                                                                None,
+                                                                None
+                                                               ))
             except Exception as err:
                 self.log.error("_get_missed exception %s " % str(err))
                 self.log.error(str(traceback.format_exc()))
