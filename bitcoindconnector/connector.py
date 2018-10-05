@@ -428,6 +428,7 @@ class Connector:
                           block_time=None,
                           block_height=None
                          ):
+        print("_get_missed", block_hash)
         if block_hash:
             t = time.time()
             block = self.block_preload.pop(block_hash)
