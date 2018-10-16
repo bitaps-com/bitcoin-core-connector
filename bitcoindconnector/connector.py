@@ -134,8 +134,6 @@ class Connector:
                 msg = await self.zmqSubSocket.recv_multipart()
                 topic = msg[0]
                 body = msg[1]
-                if len(msg[-1]) == 4:
-                    msg_sequence = struct.unpack('<I', msg[-1])[-1]
                 if topic == b"hashblock":
                     hash = hexlify(body).decode()
                     self.log.warning("New block %s" % hash)
@@ -143,6 +141,7 @@ class Connector:
                 elif topic == b"rawtx":
                     try:
                         tx = Transaction(body, format="raw")
+                        self.log.warning("New tx %s" % tx["txId"])
                     except:
                         self.log.critical("Transaction decode failed: %s" % body.hex())
                     self.loop.create_task(self._new_transaction(tx))
