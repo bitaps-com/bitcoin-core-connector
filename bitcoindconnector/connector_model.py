@@ -213,9 +213,11 @@ async def update_block_height(app, height, tx_id_list):
     if app.active:
         try:
             async with app._db_pool.acquire() as conn:
-                stmt = await conn.prepare("UPDATE connector_transaction "
-                                          "SET height = $1 "
-                                          "WHERE  id  in (select(unnest($2::BIGINT[])));")
+                stmt = await conn.prepare("""
+                                          UPDATE connector_transaction 
+                                          SET height = $1 
+                                          WHERE  id  in (select(unnest($2::BIGINT[])));
+                                          """)
                 await stmt.fetch(height, tx_id_list)
         except:
             app.log.error("Update block height failed")

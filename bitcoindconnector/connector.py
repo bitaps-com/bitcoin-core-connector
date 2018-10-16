@@ -62,7 +62,6 @@ class Connector:
         self.preload = preload
         self.block_preload = Cache(max_size=50000)
         self.block_hashes_preload = Cache(max_size=50000)
-
         self.tx_cache = Cache(max_size=50000)
         self.block_cache = Cache(max_size=10000)
         self.last_tx_id = 0
@@ -123,7 +122,6 @@ class Connector:
         self.tasks.append(self.loop.create_task(self.watchdog()))
         self.connected.set_result(True)
         if self.preload:
-            print("preload")
             self.loop.create_task(self.preload_block())
             self.loop.create_task(self.preload_block_hashes())
         self.loop.create_task(self.get_last_block())
@@ -141,7 +139,6 @@ class Connector:
                 elif topic == b"rawtx":
                     try:
                         tx = Transaction(body, format="raw")
-                        self.log.warning("New tx %s" % tx["txId"])
                     except:
                         self.log.critical("Transaction decode failed: %s" % body.hex())
                     self.loop.create_task(self._new_transaction(tx))
@@ -165,7 +162,6 @@ class Connector:
         self.tx_in_process.add(tx_hash)
         # Check is transaction new
         tx_id = self.tx_cache.get(tx["txId"])
-        print("tx_id", tx_id)
         if tx_id is not None:
             self.tx_in_process.remove(tx_hash)
             return
@@ -426,9 +422,7 @@ class Connector:
     async def _get_missed(self,
                           block_hash=False,
                           block_time=None,
-                          block_height=None
-                         ):
-        print("_get_missed", block_hash)
+                          block_height=None):
         if block_hash:
             t = time.time()
             block = self.block_preload.pop(block_hash)
