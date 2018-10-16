@@ -164,7 +164,7 @@ class Connector:
             return
         self.tx_in_process.add(tx_hash)
         # Check is transaction new
-        tx_id = self.tx_cache.get(tx_hash)
+        tx_id = self.tx_cache.get(tx["txId"])
         print("tx_id", tx_id)
         if tx_id is not None:
             self.tx_in_process.remove(tx_hash)
