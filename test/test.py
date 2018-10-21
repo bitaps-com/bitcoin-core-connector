@@ -110,11 +110,10 @@ class App:
     async def new_block_handler(self, data, cur):
         self.log.warning("handler new block %s" % str(data["hash"]))
 
-    async def new_transaction_handler(self, data, ft):
-        # pass
-        # self.log.debug("tx_handler:")
+    async def new_transaction_handler(self, data, ft, a,b,c):
+
         assert data["rawTx"] == data.serialize(hex=False)
-        # print(pybtc.rh2s(data["txId"]))
+
 
     def _exc(self, a, b, c):
         return
