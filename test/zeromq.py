@@ -7,8 +7,6 @@ import uvloop
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 
-
-
 class App:
     def __init__(self, loop, link):
         self.loop = loop
@@ -40,7 +38,7 @@ class App:
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    app = App(loop, "tcp://btc.three.bitaps.com:18900")
+    app = App(loop, "tcp://bch.three.bitaps.com:8900")
     loop.run_forever()
     pending = asyncio.Task.all_tasks()
     loop.run_until_complete(asyncio.gather(*pending))

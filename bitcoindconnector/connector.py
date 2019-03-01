@@ -36,6 +36,7 @@ class Connector:
                  preload=False):
         self.loop = loop
         self.log = logger
+        self.last_zmq_msg = 0
         self.postgresql_pool_max_size = postgresql_pool_max_size
         self.rpc_url = bitcoind_rpc_url
         self.zmq_url = bitcoind_zerromq_url
@@ -133,10 +134,12 @@ class Connector:
                 topic = msg[0]
                 body = msg[1]
                 if topic == b"hashblock":
+                    self.last_zmq_msg = int(time.time())
                     hash = hexlify(body).decode()
                     self.log.warning("New block %s" % hash)
                     self.loop.create_task(self._get_block_by_hash(hash))
                 elif topic == b"rawtx":
+                    self.last_zmq_msg = int(time.time())
                     try:
                         tx = Transaction(body, format="raw")
                     except:
@@ -266,7 +269,7 @@ class Connector:
                                 self.log.info("orphan handler  %s [%s]" % (self.last_block_height, tm(tq)))
                             tq = tm()
                             await remove_orphan(self, con)
-                            self.log.info("remove orphan %s [%s]" % (self.last_block_height, tm(tq)))
+                            self.log.info("remove orphan %s [%s]" % (self.last_block_height + 1, tm(tq)))
                         next_block_height -= 2
                         if next_block_height > self.last_block_height:
                             next_block_height = self.last_block_height + 1
