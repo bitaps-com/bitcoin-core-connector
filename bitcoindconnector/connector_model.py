@@ -231,7 +231,6 @@ async def insert_new_tx(app, tx_hash):
     if not app.tx_batch_active:
         app.loop.create_task(app.tx_batch())
     await  app.add_tx_future[tx_hash]["insert"]
-    assert app.add_tx_future[tx_hash]["insert"].result() == True
     app.add_tx_future.pop(tx_hash)
     return tx_id
 
