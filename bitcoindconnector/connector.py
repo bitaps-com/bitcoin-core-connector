@@ -521,7 +521,7 @@ class Connector:
             block = self.block_hashes_preload.pop(hash)
             if not block:
                 block = await self.rpc.getblock(hash)
-            if block["hash"] == hash:
+            if block["hash"] != hash:
                 raise Exception("block hash mismatch")
             self.loop.create_task(self._new_block(block))
         except Exception:
