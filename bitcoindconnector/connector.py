@@ -304,7 +304,8 @@ class Connector:
                     self.tx_cache.pop(s2rh("d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599"))
                     self.tx_cache.pop(s2rh("e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468"))
                 tx_id_list, missed = await get_tx_id_list(self, binary_tx_hash_list, con)
-                assert len(tx_id_list)+len(missed) == len(block["tx"])
+                if len(tx_id_list)+len(missed) != len(block["tx"]):
+                    raise Exception("tx count mismatch")
                 self.await_tx_id_list = tx_id_list
                 if self.before_block_handler:
                     sn = await self.before_block_handler(block,
@@ -520,7 +521,8 @@ class Connector:
             block = self.block_hashes_preload.pop(hash)
             if not block:
                 block = await self.rpc.getblock(hash)
-            assert block["hash"] == hash
+            if block["hash"] == hash:
+                raise Exception("block hash mismatch")
             self.loop.create_task(self._new_block(block))
         except Exception:
             self.log.error("get block by hash %s FAILED" % hash)
