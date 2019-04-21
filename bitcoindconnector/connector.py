@@ -139,7 +139,8 @@ class Connector:
                 self.zmqContext = zmq.asyncio.Context()
                 self.zmqSubSocket = self.zmqContext.socket(zmq.SUB)
                 self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "hashblock")
-                self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawtx")
+                if self.mempool_tx:
+                    self.zmqSubSocket.setsockopt_string(zmq.SUBSCRIBE, "rawtx")
                 self.zmqSubSocket.connect(self.zmq_url)
                 self.log.info("Zeromq started")
                 while True:
@@ -339,6 +340,7 @@ class Connector:
                 self.blocks_processing_time += time.time() - q
                 bpt += time.time() - q
                 self.blocks_processed_count += 1
+            [self.tx_cache.pop(h) for h in block["tx"]]
         except Exception as err:
             if self.await_tx_list:
                 self.await_tx_list = []
