@@ -2,7 +2,7 @@
 # coding: utf-8
 from distutils.core import setup
 
-setup(name='Bitcoind  node connector',
+setup(name='Bitcoind node connector',
       version='2.1.0',
       description='Connector to bitcoind node.',
       author='Aleksey Karpov',
