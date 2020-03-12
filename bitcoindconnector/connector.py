@@ -27,6 +27,7 @@ class Connector:
                  orphan_handler=None,
                  before_block_handler=None,
                  block_received_handler=None,
+                 mempool_tx=True,
                  batch_limit=20,
                  rpc_threads_limit=100,
                  block_timeout=300,
@@ -36,6 +37,7 @@ class Connector:
                  preload=False):
         self.loop = loop
         self.log = logger
+        self.__mempool_tx=mempool_tx,
         self.last_zmq_msg = 0
         self.postgresql_pool_max_size = postgresql_pool_max_size
         self.rpc_url = bitcoind_rpc_url
@@ -139,11 +141,12 @@ class Connector:
                     self.log.warning("New block %s" % hash)
                     self.loop.create_task(self._get_block_by_hash(hash))
                 elif topic == b"rawtx":
-                    self.last_zmq_msg = int(time.time())
-                    try:
-                        tx = Transaction(body, format="raw")
-                    except:
-                        self.log.critical("Transaction decode failed: %s" % body.hex())
+                    if self.__mempool_tx:
+                        self.last_zmq_msg = int(time.time())
+                        try:
+                            tx = Transaction(body, format="raw")
+                        except:
+                            self.log.critical("Transaction decode failed: %s" % body.hex())
                     self.loop.create_task(self._new_transaction(tx))
                 if not self.active:
                     break
